@@ -1,4 +1,4 @@
-"""Download the financial dataset from Kaggle and upload to ADLS raw container."""
+"""Baixa o dataset financeiro do Kaggle e envia para o container raw do ADLS."""
 import os
 import zipfile
 from pathlib import Path
@@ -9,8 +9,8 @@ load_dotenv()
 
 
 def download_dataset(dest_dir: str = "data/raw") -> Path:
-    """Download adhoppin/financial-data from Kaggle to dest_dir."""
-    import kaggle  # noqa: PLC0415  (lazy import — requires KAGGLE_USERNAME/KEY in env)
+    """Faz download do adhoppin/financial-data do Kaggle para dest_dir."""
+    import kaggle  # noqa: PLC0415  (import tardio — exige KAGGLE_USERNAME/KEY no env)
 
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
@@ -27,12 +27,12 @@ def download_dataset(dest_dir: str = "data/raw") -> Path:
         zf.extractall(dest)
     zip_path.unlink()
 
-    print(f"Dataset extracted to {dest}")
+    print(f"Dataset extraido em {dest}")
     return dest
 
 
 def upload_to_adls(local_dir: str = "data/raw") -> None:
-    """Upload all CSV files from local_dir to ADLS raw container."""
+    """Envia todos os arquivos CSV de local_dir para o container raw do ADLS."""
     from azure.identity import DefaultAzureCredential
     from azure.storage.filedatalake import DataLakeServiceClient
 

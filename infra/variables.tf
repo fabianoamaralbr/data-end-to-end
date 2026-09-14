@@ -1,28 +1,28 @@
 variable "project" {
-  description = "Project name used as prefix for all resources"
+  description = "Nome do projeto usado como prefixo em todos os recursos"
   type        = string
   default     = "financial-data"
 }
 
 variable "environment" {
-  description = "Deployment environment: dev | stg | prod"
+  description = "Ambiente de implantacao: dev | stg | prod"
   type        = string
   default     = "dev"
 
   validation {
     condition     = contains(["dev", "stg", "prod"], var.environment)
-    error_message = "environment must be one of: dev, stg, prod"
+    error_message = "O ambiente deve ser um dos seguintes: dev, stg, prod"
   }
 }
 
 variable "location" {
-  description = "Azure region for all resources"
+  description = "Regiao Azure para todos os recursos"
   type        = string
   default     = "eastus2"
 }
 
 variable "tags" {
-  description = "Tags applied to all resources"
+  description = "Tags aplicadas a todos os recursos"
   type        = map(string)
   default = {
     project     = "financial-data"
@@ -33,34 +33,34 @@ variable "tags" {
 
 # ── Storage ───────────────────────────────────────────────────────────────────
 variable "adls_account_tier" {
-  description = "ADLS Gen2 storage account tier"
+  description = "Tier da conta de armazenamento ADLS Gen2"
   type        = string
   default     = "Standard"
 }
 
 variable "adls_replication" {
-  description = "ADLS Gen2 replication type"
+  description = "Tipo de replicacao do ADLS Gen2"
   type        = string
   default     = "LRS"
 }
 
 # ── Databricks ────────────────────────────────────────────────────────────────
 variable "databricks_sku" {
-  description = "Databricks workspace SKU: standard | premium | trial"
+  description = "SKU do workspace Databricks: standard | premium | trial"
   type        = string
   default     = "premium"
 }
 
 # ── Synapse ───────────────────────────────────────────────────────────────────
 variable "synapse_sql_admin_login" {
-  description = "Synapse SQL admin username"
+  description = "Usuario administrador do Synapse SQL"
   type        = string
   default     = "sqladminuser"
   sensitive   = true
 }
 
 variable "synapse_sql_admin_password" {
-  description = "Synapse SQL admin password (minimum 8 chars, uppercase, lowercase, digit, special)"
+  description = "Senha do administrador Synapse SQL (minimo 8 caracteres, maiuscula, minuscula, digito e especial)"
   type        = string
   sensitive   = true
 }

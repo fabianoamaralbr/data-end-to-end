@@ -21,7 +21,7 @@ resource "azurerm_databricks_workspace" "dbw" {
   tags                        = var.tags
 }
 
-# Grant Databricks managed identity Storage Blob Data Contributor on ADLS
+# Concede Storage Blob Data Contributor ao managed identity do Databricks no ADLS
 data "azurerm_storage_account" "adls" {
   name                = var.storage_account_name
   resource_group_name = var.resource_group_name

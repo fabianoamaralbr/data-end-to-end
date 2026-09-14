@@ -1,4 +1,4 @@
-"""Unit tests for the bronze ingestion transformation logic."""
+"""Testes unitarios para a logica de transformacao da camada bronze (ingestao)."""
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col
 

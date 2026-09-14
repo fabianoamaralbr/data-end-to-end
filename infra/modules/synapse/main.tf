@@ -27,7 +27,7 @@ resource "azurerm_synapse_workspace" "synw" {
   }
 }
 
-# Allow Synapse serverless SQL to read Delta tables on ADLS
+# Permite que o Synapse serverless SQL leia as tabelas Delta no ADLS
 data "azurerm_storage_account" "adls" {
   name                = var.storage_account_name
   resource_group_name = var.resource_group_name
@@ -39,7 +39,7 @@ resource "azurerm_role_assignment" "synapse_adls_reader" {
   principal_id         = azurerm_synapse_workspace.synw.identity[0].principal_id
 }
 
-# Firewall rule — open to Azure services (required for ADF trigger)
+# Regra de firewall — abre para servicos Azure (necessario para o trigger do ADF)
 resource "azurerm_synapse_firewall_rule" "allow_azure_services" {
   name                 = "AllowAllWindowsAzureIps"
   synapse_workspace_id = azurerm_synapse_workspace.synw.id

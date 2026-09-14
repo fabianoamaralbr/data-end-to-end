@@ -18,7 +18,7 @@ resource "azurerm_storage_account" "adls" {
   account_tier             = var.account_tier
   account_replication_type = var.replication_type
   account_kind             = "StorageV2"
-  is_hns_enabled           = true  # Enables ADLS Gen2 hierarchical namespace
+  is_hns_enabled           = true  # habilita o namespace hierarquico do ADLS Gen2
 
   blob_properties {
     versioning_enabled = true

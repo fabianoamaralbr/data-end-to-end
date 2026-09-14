@@ -1,4 +1,4 @@
-"""Generate a realistic 500-row financial sample CSV for local dev/tests."""
+"""Gera um CSV de amostra financeira realista com 500 linhas para desenvolvimento local e testes."""
 import csv
 import random
 from datetime import date, timedelta
@@ -37,7 +37,7 @@ def main():
         current_price = params["base"]
         current_date = START_DATE
         for _ in range(ROWS_PER_TICKER):
-            # skip weekends
+            # pula finais de semana
             while current_date.weekday() >= 5:
                 current_date += timedelta(days=1)
 
@@ -62,7 +62,7 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"Generated {len(rows)} rows -> {out_path}")
+    print(f"Geradas {len(rows)} linhas -> {out_path}")
 
 
 if __name__ == "__main__":

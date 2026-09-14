@@ -3,7 +3,7 @@
   "type": "Microsoft.DataFactory/factories/datasets",
   "properties": {
     "type": "DelimitedText",
-    "description": "Source: Kaggle financial dataset downloaded via HTTP",
+    "description": "Origem: dataset financeiro do Kaggle obtido via HTTP",
     "linkedServiceName": {
       "referenceName": "ls_http_kaggle",
       "type": "LinkedServiceReference"

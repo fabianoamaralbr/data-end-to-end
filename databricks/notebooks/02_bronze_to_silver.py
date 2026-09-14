@@ -1,17 +1,17 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 02 — Bronze to Silver
+# MAGIC # 02 — Bronze para Silver
 # MAGIC
-# MAGIC **Layer:** Silver (cleansed, validated, enriched)
+# MAGIC **Camada:** Silver (limpa, validada e enriquecida)
 # MAGIC
-# MAGIC Transformations applied:
-# MAGIC - Cast all columns to correct types (Date, Double, Long)
-# MAGIC - Drop exact duplicates on (Date, Symbol)
-# MAGIC - Filter rows with null or non-positive Close price
-# MAGIC - Derive `daily_return_pct` = (Close - Open) / Open * 100
-# MAGIC - Derive `intraday_range`   = High - Low
-# MAGIC - Derive `price_spread_pct` = (High - Low) / Open * 100
-# MAGIC - Partition by date for efficient downstream querying
+# MAGIC Transformacoes aplicadas:
+# MAGIC - Conversao de todas as colunas para os tipos corretos (Date, Double, Long)
+# MAGIC - Remocao de duplicatas exatas em (Date, Symbol)
+# MAGIC - Filtragem de linhas com preco Close nulo ou nao positivo
+# MAGIC - Calculo de `daily_return_pct` = (Close - Open) / Open * 100
+# MAGIC - Calculo de `intraday_range`   = High - Low
+# MAGIC - Calculo de `price_spread_pct` = (High - Low) / Open * 100
+# MAGIC - Particao por data para consultas eficientes nas camadas seguintes
 
 # COMMAND ----------
 
@@ -36,14 +36,14 @@ BRONZE_PATH = "/mnt/bronze/financial_data/"
 SILVER_PATH = "/mnt/silver/financial_data/"
 
 # COMMAND ----------
-# MAGIC %md ## 1. Read bronze Delta
+# MAGIC %md ## 1. Leitura do Delta bronze
 
 bronze_df = spark.read.format("delta").load(BRONZE_PATH)
 rows_bronze = bronze_df.count()
 print(f"[silver] rows_bronze={rows_bronze}")
 
 # COMMAND ----------
-# MAGIC %md ## 2. Cast types
+# MAGIC %md ## 2. Conversao de tipos
 
 typed_df = (
     bronze_df
@@ -57,7 +57,7 @@ typed_df = (
 )
 
 # COMMAND ----------
-# MAGIC %md ## 3. Deduplicate + filter invalid rows
+# MAGIC %md ## 3. Deduplicacao e filtragem de linhas invalidas
 
 clean_df = (
     typed_df
@@ -72,7 +72,7 @@ rows_dropped = rows_bronze - rows_clean
 print(f"[silver] rows_clean={rows_clean}  rows_dropped={rows_dropped}")
 
 # COMMAND ----------
-# MAGIC %md ## 4. Derive business metrics
+# MAGIC %md ## 4. Calculo de metricas de negocio
 
 silver_df = (
     clean_df
@@ -92,7 +92,7 @@ silver_df = (
 )
 
 # COMMAND ----------
-# MAGIC %md ## 5. Write Silver Delta (overwrite with schema evolution, partition by Date)
+# MAGIC %md ## 5. Gravacao do Delta silver (overwrite com evolucao de schema, particao por Date)
 
 (
     silver_df.write

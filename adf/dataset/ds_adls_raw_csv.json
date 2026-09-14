@@ -3,7 +3,7 @@
   "type": "Microsoft.DataFactory/factories/datasets",
   "properties": {
     "type": "DelimitedText",
-    "description": "Sink: raw CSV files landing in ADLS raw container under /financial-data/",
+    "description": "Destino: arquivos CSV brutos que chegam no container raw do ADLS em /financial-data/",
     "linkedServiceName": {
       "referenceName": "ls_adls_gen2",
       "type": "LinkedServiceReference",

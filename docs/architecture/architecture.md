@@ -1,14 +1,14 @@
-# Architecture — Financial Data End-to-End Platform
+# Arquitetura — Plataforma de Dados End-to-End Financeiro
 
-## High-Level Flow
+## Fluxo Geral
 
 ```mermaid
 flowchart LR
-    subgraph SOURCE["Data Source"]
+    subgraph SOURCE["Fonte de Dados"]
         K["Kaggle\nadhoppin/financial-data\nOHLCV CSV"]
     end
 
-    subgraph INGEST["Ingestion — Azure Data Factory"]
+    subgraph INGEST["Ingestao — Azure Data Factory"]
         ADF["pl_ingest_financial_data\nHTTP Copy Activity"]
     end
 
@@ -20,19 +20,19 @@ flowchart LR
         GOLD_S["gold/\ndaily_summary/ (Delta)"]
     end
 
-    subgraph TRANSFORM["Transformation — Azure Databricks"]
-        NB1["01_raw_to_bronze\n+ metadata cols"]
-        NB2["02_bronze_to_silver\nclean, enrich, partition"]
-        NB3["03_silver_to_gold\nMA7, MA30, lag returns"]
+    subgraph TRANSFORM["Transformacao — Azure Databricks"]
+        NB1["01_raw_to_bronze\n+ colunas de metadados"]
+        NB2["02_bronze_to_silver\nlimpar, enriquecer, particionar"]
+        NB3["03_silver_to_gold\nMA7, MA30, retornos com lag"]
     end
 
     subgraph ANALYTICS["Analytics — Azure Synapse Serverless SQL"]
-        EXT["External Tables\nbronze / silver / gold"]
-        VIEWS["Analytics Views\nvw_rolling_volatility\nvw_symbol_performance\nvw_data_quality_check"]
+        EXT["Tabelas Externas\nbronze / silver / gold"]
+        VIEWS["Views de Analytics\nvw_rolling_volatility\nvw_symbol_performance\nvw_data_quality_check"]
     end
 
-    subgraph VIZ["Visualization — Power BI"]
-        PBI["financial_dashboard\n2 pages: Overview + Technical"]
+    subgraph VIZ["Visualizacao — Power BI"]
+        PBI["financial_dashboard\n2 paginas: Visao Geral + Analise Tecnica"]
     end
 
     K -->|"HTTP GET"| ADF
@@ -47,21 +47,21 @@ flowchart LR
     VIEWS -->|"DirectQuery"| PBI
 ```
 
-## Medallion Layers
+## Camadas Medallion
 
-| Layer | Format | Path | Purpose |
-|-------|--------|------|---------|
-| **Raw** | CSV | `raw/financial-data/*.csv` | Landing zone — files as-is from ADF |
-| **Bronze** | Delta Lake | `bronze/financial_data/` | Raw data + ingestion metadata; append-only |
-| **Silver** | Delta Lake | `silver/financial_data/` | Typed, deduplicated, enriched; partitioned by `Date` |
-| **Gold Detail** | Delta Lake | `gold/financial_data/` | Per-row with MA7/MA30/lag; partitioned by `Symbol` |
-| **Gold Summary** | Delta Lake | `gold/daily_summary/` | Aggregated daily metrics; Power BI source |
+| Camada | Formato | Caminho | Proposito |
+|--------|---------|---------|-----------|
+| **Raw** | CSV | `raw/financial-data/*.csv` | Zona de pouso — arquivos como recebidos do ADF |
+| **Bronze** | Delta Lake | `bronze/financial_data/` | Dados brutos + metadados de ingestao; somente append |
+| **Silver** | Delta Lake | `silver/financial_data/` | Tipado, deduplicado, enriquecido; particionado por `Date` |
+| **Gold Detail** | Delta Lake | `gold/financial_data/` | Linha a linha com MA7/MA30/lag; particionado por `Symbol` |
+| **Gold Summary** | Delta Lake | `gold/daily_summary/` | Metricas diarias agregadas; fonte do Power BI |
 
-## Sequence Diagram — Daily Pipeline Run
+## Diagrama de Sequencia — Execucao Diaria do Pipeline
 
 ```mermaid
 sequenceDiagram
-    participant Schedule as ADF Schedule (06:00 BRT)
+    participant Schedule as Agendamento ADF (06:00 BRT)
     participant ADF as Azure Data Factory
     participant ADLS as ADLS Gen2 raw/
     participant DBR as Databricks Workflow
@@ -71,92 +71,92 @@ sequenceDiagram
     participant Synapse as Synapse Serverless SQL
     participant PBI as Power BI
 
-    Schedule->>ADF: trigger pl_ingest_financial_data
-    ADF->>ADLS: HTTP GET Kaggle → CSV copy
-    ADF->>DBR: trigger medallion_workflow job
+    Schedule->>ADF: dispara pl_ingest_financial_data
+    ADF->>ADLS: HTTP GET Kaggle → copia CSV
+    ADF->>DBR: dispara job medallion_workflow
     DBR->>Bronze: 01_raw_to_bronze (append)
-    DBR->>Silver: 02_bronze_to_silver (overwrite + partition Date)
-    DBR->>Gold: 03_silver_to_gold (overwrite + partition Symbol)
-    Note over Synapse: External tables auto-reflect new Delta snapshot
-    PBI->>Synapse: DirectQuery on gold.daily_summary
-    Synapse->>PBI: aggregated OHLCV + metrics
+    DBR->>Silver: 02_bronze_to_silver (overwrite + particao Date)
+    DBR->>Gold: 03_silver_to_gold (overwrite + particao Symbol)
+    Note over Synapse: Tabelas externas refletem automaticamente o novo snapshot Delta
+    PBI->>Synapse: DirectQuery em gold.daily_summary
+    Synapse->>PBI: OHLCV agregado + metricas
 ```
 
 ---
 
-## Architecture Decision Records
+## Registros de Decisao de Arquitetura (ADRs)
 
-### ADR-001 — Delta Lake as the unified storage format
+### ADR-001 — Delta Lake como formato unificado de armazenamento
 
-**Status:** Accepted
+**Status:** Aceito
 
-**Context:** We need a format that supports ACID transactions, schema evolution, and efficient reads from both Databricks (Spark) and Synapse Analytics (serverless SQL).
+**Contexto:** Precisamos de um formato que suporte transacoes ACID, evolucao de schema e leituras eficientes tanto pelo Databricks (Spark) quanto pelo Synapse Analytics (SQL serverless).
 
-**Decision:** Use Delta Lake for all three medallion layers (bronze, silver, gold).
+**Decisao:** Usar Delta Lake nas tres camadas medallion (bronze, silver, gold).
 
-**Consequences:**
-- Synapse serverless SQL reads Delta via `EXTERNAL TABLE ... FORMAT=DELTA`, which leverages the Delta transaction log for schema and latest snapshot.
-- Time-travel (`VERSION AS OF`, `TIMESTAMP AS OF`) is available for debugging and reprocessing.
-- Append-mode on bronze means no data loss from reprocessing failures; overwrite on silver/gold is safe because bronze is the source of truth.
-
----
-
-### ADR-002 — Medallion architecture (bronze / silver / gold)
-
-**Status:** Accepted
-
-**Context:** Financial data requires distinct separation between raw ingestion, cleansed analytics-ready data, and business aggregations.
-
-**Decision:** Three-layer medallion with clearly defined contracts at each boundary:
-- Bronze = raw + metadata only
-- Silver = business-typed, deduplicated, enriched with derived metrics (daily return, intraday range)
-- Gold = aggregated and windowed (MA7, MA30, lag returns) — the only layer Power BI touches
-
-**Consequences:**
-- Silver is the reprocessing boundary: bronze is never transformed in-place. If a silver transformation bug is found, we rerun 02_bronze_to_silver without re-ingesting.
-- Gold is the performance layer — Synapse queries hit pre-aggregated data, not raw rows.
+**Consequencias:**
+- O Synapse serverless SQL le o Delta via `EXTERNAL TABLE ... FORMAT=DELTA`, aproveitando o transaction log do Delta para schema e snapshot mais recente.
+- Time-travel (`VERSION AS OF`, `TIMESTAMP AS OF`) disponivel para depuracao e reprocessamento.
+- O modo append no bronze garante que nenhum dado seja perdido em falhas de reprocessamento; overwrite em silver/gold e seguro pois bronze e a fonte da verdade.
 
 ---
 
-### ADR-003 — Synapse Serverless SQL (not Dedicated Pool) for analytics
+### ADR-002 — Arquitetura medallion (bronze / silver / gold)
 
-**Status:** Accepted
+**Status:** Aceito
 
-**Context:** We need SQL-based access to Delta Lake for Power BI DirectQuery and ad-hoc analysis, without the cost of a 24/7 dedicated SQL pool.
+**Contexto:** Dados financeiros exigem separacao clara entre ingestao bruta, dados limpos prontos para analytics e agregacoes de negocio.
 
-**Decision:** Synapse Serverless SQL with external tables pointing to Delta Lake on ADLS.
+**Decisao:** Medallion de tres camadas com contratos bem definidos em cada fronteira:
+- Bronze = dados brutos + metadados apenas
+- Silver = tipado para negocio, deduplicado, enriquecido com metricas derivadas (retorno diario, amplitude intradiaria)
+- Gold = agregado e janelado (MA7, MA30, retornos com lag) — unica camada que o Power BI acessa
 
-**Consequences:**
-- Zero provisioning cost when idle — pay per query (TB scanned).
-- No ETL into Synapse — Delta Lake is the authoritative store; Synapse reads it directly.
-- DirectQuery from Power BI hits Synapse, which reads from ADLS, so freshness = pipeline cadence (daily at 06:00 BRT).
-
----
-
-### ADR-004 — ADF for ingestion, not a custom script
-
-**Status:** Accepted
-
-**Context:** Initial ingestion from Kaggle could be done with a simple Python script. However, we need retry logic, monitoring, lineage, and scheduled triggers.
-
-**Decision:** Azure Data Factory for ingestion (HTTP → ADLS copy) with Managed Identity authentication to ADLS, secrets in Azure Key Vault.
-
-**Consequences:**
-- ADF provides built-in retry, run history, and integration with Azure Monitor alerts.
-- No credentials in code — both ADF and Databricks authenticate via Managed Identity.
-- The `scripts/download_kaggle_data.py` script is retained as a local developer utility (initial seeding, backfills), not the production path.
+**Consequencias:**
+- Silver e a fronteira de reprocessamento: o bronze nunca e transformado in-place. Se um bug de transformacao silver for encontrado, reexecutamos 02_bronze_to_silver sem re-ingerir.
+- Gold e a camada de desempenho — as queries do Synapse batem em dados pre-agregados, nao em linhas brutas.
 
 ---
 
-### ADR-005 — Power BI PBIP format (not .pbix)
+### ADR-003 — Synapse Serverless SQL (nao Dedicated Pool) para analytics
 
-**Status:** Accepted
+**Status:** Aceito
 
-**Context:** `.pbix` is a binary file — not diffable in git, not reviewable in PRs.
+**Contexto:** Precisamos de acesso SQL ao Delta Lake para o DirectQuery do Power BI e analises ad-hoc, sem o custo de um pool SQL dedicado 24/7.
 
-**Decision:** Use Power BI Project (`.pbip`) format which stores the semantic model (`model.bim`) and report definition (`report.json`) as plain JSON files.
+**Decisao:** Synapse Serverless SQL com tabelas externas apontando para o Delta Lake no ADLS.
 
-**Consequences:**
-- Full git history on DAX measures, report layout, and data model changes.
-- CI can lint or validate model.bim structure.
-- Requires Power BI Desktop June 2023+ to open.
+**Consequencias:**
+- Custo zero de provisionamento em idle — paga-se por query (TB escaneado).
+- Sem ETL para dentro do Synapse — Delta Lake e o armazenamento autoritativo; Synapse le diretamente.
+- O DirectQuery do Power BI acessa o Synapse, que le do ADLS; frescor dos dados = cadencia do pipeline (diario as 06:00 BRT).
+
+---
+
+### ADR-004 — ADF para ingestao, nao um script customizado
+
+**Status:** Aceito
+
+**Contexto:** A ingestao inicial do Kaggle poderia ser feita com um script Python simples. Porem, precisamos de logica de retry, monitoramento, lineage e triggers agendados.
+
+**Decisao:** Azure Data Factory para ingestao (HTTP → copia ADLS) com autenticacao via Managed Identity no ADLS e segredos no Azure Key Vault.
+
+**Consequencias:**
+- ADF oferece retry nativo, historico de execucoes e integracao com alertas do Azure Monitor.
+- Sem credenciais no codigo — ADF e Databricks autenticam via Managed Identity.
+- O script `scripts/download_kaggle_data.py` e mantido como utilitario local do desenvolvedor (carga inicial, backfills), nao como caminho de producao.
+
+---
+
+### ADR-005 — Formato Power BI PBIP (nao .pbix)
+
+**Status:** Aceito
+
+**Contexto:** `.pbix` e um arquivo binario — nao e diffavel no git e nao e revisavel em PRs.
+
+**Decisao:** Usar o formato Power BI Project (`.pbip`), que armazena o semantic model (`model.bim`) e a definicao do relatorio (`report.json`) como arquivos JSON simples.
+
+**Consequencias:**
+- Historico git completo para medidas DAX, layout do relatorio e alteracoes no modelo de dados.
+- CI pode fazer lint ou validar a estrutura do model.bim.
+- Requer Power BI Desktop junho/2023 ou superior para abrir.

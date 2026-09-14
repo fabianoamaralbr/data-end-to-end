@@ -1,4 +1,4 @@
-"""Unit tests for the silver transformation logic (cleanse, enrich)."""
+"""Testes unitarios para a logica de transformacao da camada silver (limpeza e enriquecimento)."""
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, round as spark_round, to_date
 

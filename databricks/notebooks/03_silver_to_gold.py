@@ -1,21 +1,21 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 03 — Silver to Gold
+# MAGIC # 03 — Silver para Gold
 # MAGIC
-# MAGIC **Layer:** Gold (business-ready aggregations)
+# MAGIC **Camada:** Gold (agregacoes prontas para o negocio)
 # MAGIC
-# MAGIC Produces two Gold tables:
-# MAGIC - **`financial_data`** — per-row with moving averages (MA7, MA30) and lag-based return
-# MAGIC - **`daily_summary`** — aggregated daily metrics per symbol for Power BI and Synapse SQL
+# MAGIC Produz duas tabelas Gold:
+# MAGIC - **`financial_data`** — linha a linha com medias moveis (MA7, MA30) e retorno com lag
+# MAGIC - **`daily_summary`** — metricas diarias agregadas por simbolo para Power BI e Synapse SQL
 # MAGIC
-# MAGIC | Column | Logic |
-# MAGIC |--------|-------|
-# MAGIC | ma_close_7d | 7-day simple moving average of Close |
-# MAGIC | ma_close_30d | 30-day simple moving average of Close |
-# MAGIC | ma_volume_7d | 7-day moving average of Volume |
-# MAGIC | prev_close | Previous trading day Close (lag 1) |
+# MAGIC | Coluna | Logica |
+# MAGIC |--------|--------|
+# MAGIC | ma_close_7d | Media movel simples de 7 dias do Close |
+# MAGIC | ma_close_30d | Media movel simples de 30 dias do Close |
+# MAGIC | ma_volume_7d | Media movel de 7 dias do Volume |
+# MAGIC | prev_close | Close do pregao anterior (lag 1) |
 # MAGIC | day_over_day_return_pct | (Close - prev_close) / prev_close * 100 |
-# MAGIC | cumulative_return_pct | Cumulative % return from first record per symbol |
+# MAGIC | cumulative_return_pct | Retorno acumulado (%) desde o primeiro registro do simbolo |
 
 # COMMAND ----------
 
@@ -47,13 +47,13 @@ GOLD_DETAIL_PATH = "/mnt/gold/financial_data/"
 GOLD_SUMMARY_PATH = "/mnt/gold/daily_summary/"
 
 # COMMAND ----------
-# MAGIC %md ## 1. Read Silver
+# MAGIC %md ## 1. Leitura do Silver
 
 silver_df = spark.read.format("delta").load(SILVER_PATH)
 print(f"[gold] rows_silver={silver_df.count()}")
 
 # COMMAND ----------
-# MAGIC %md ## 2. Window functions — moving averages + lag
+# MAGIC %md ## 2. Funcoes de janela — medias moveis e lag
 
 window_symbol_date = Window.partitionBy("Symbol").orderBy("Date")
 window_7d          = window_symbol_date.rowsBetween(-6, 0)
@@ -85,7 +85,7 @@ detail_df = (
 )
 
 # COMMAND ----------
-# MAGIC %md ## 3. Write Gold detail table
+# MAGIC %md ## 3. Gravacao da tabela Gold detalhada
 
 (
     detail_df.write
@@ -99,7 +99,7 @@ detail_df = (
 print(f"[gold] detail rows_written={spark.read.format('delta').load(GOLD_DETAIL_PATH).count()}")
 
 # COMMAND ----------
-# MAGIC %md ## 4. Aggregate daily summary per Symbol
+# MAGIC %md ## 4. Agregacao do resumo diario por simbolo
 
 summary_df = (
     detail_df

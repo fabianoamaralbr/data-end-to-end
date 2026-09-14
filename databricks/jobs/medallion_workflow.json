@@ -1,6 +1,6 @@
 {
   "name": "financial_data_medallion_pipeline",
-  "description": "End-to-end medallion pipeline: raw CSV -> bronze -> silver -> gold Delta Lake tables",
+  "description": "Pipeline medallion completo: CSV bruto -> bronze -> silver -> gold em tabelas Delta Lake",
   "email_notifications": {
     "on_failure": ["data-team@your-org.com"],
     "no_alert_for_skipped_runs": false
@@ -10,7 +10,7 @@
   "tasks": [
     {
       "task_key": "setup_mounts",
-      "description": "Mount ADLS containers (raw/bronze/silver/gold) to DBFS",
+      "description": "Monta os containers ADLS (raw/bronze/silver/gold) no DBFS",
       "notebook_task": {
         "notebook_path": "/Repos/financial-data/databricks/notebooks/00_setup_mounts",
         "source": "GIT",
@@ -23,7 +23,7 @@
     },
     {
       "task_key": "raw_to_bronze",
-      "description": "Ingest raw CSV into Delta Lake bronze layer with metadata columns",
+      "description": "Ingere o CSV bruto na camada bronze do Delta Lake com colunas de metadados",
       "depends_on": [
         {"task_key": "setup_mounts"}
       ],
@@ -36,7 +36,7 @@
     },
     {
       "task_key": "bronze_to_silver",
-      "description": "Cleanse, validate, and enrich bronze data into silver Delta layer",
+      "description": "Limpa, valida e enriquece os dados bronze na camada silver do Delta Lake",
       "depends_on": [
         {"task_key": "raw_to_bronze"}
       ],
@@ -49,7 +49,7 @@
     },
     {
       "task_key": "silver_to_gold",
-      "description": "Compute moving averages, lag returns, and daily summaries into gold Delta layer",
+      "description": "Calcula medias moveis, retornos com lag e resumos diarios na camada gold do Delta Lake",
       "depends_on": [
         {"task_key": "bronze_to_silver"}
       ],

@@ -21,7 +21,7 @@ resource "azurerm_data_factory" "adf" {
   }
 
   github_configuration {
-    account_name       = ""  # set after initial deploy
+    account_name       = ""  # preencher apos o deploy inicial
     branch_name        = "main"
     git_url            = ""
     repository_name    = "data-end-to-end"
@@ -29,7 +29,7 @@ resource "azurerm_data_factory" "adf" {
   }
 }
 
-# Grant ADF's managed identity Storage Blob Data Contributor on ADLS
+# Concede Storage Blob Data Contributor ao managed identity do ADF no ADLS
 data "azurerm_storage_account" "adls" {
   name                = var.storage_account_name
   resource_group_name = var.resource_group_name

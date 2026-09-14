@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 00 — Setup ADLS Mounts
+# MAGIC # 00 — Configuracao dos Mounts ADLS
 # MAGIC
-# MAGIC Mounts all four ADLS Gen2 containers (raw, bronze, silver, gold) to DBFS.
-# MAGIC Run once per cluster restart or use cluster init scripts.
+# MAGIC Monta os quatro containers ADLS Gen2 (raw, bronze, silver, gold) no DBFS.
+# MAGIC Execute uma vez por reinicializacao do cluster ou use scripts de inicializacao.
 # MAGIC
-# MAGIC **Prerequisites:** Service principal credentials stored in Databricks secrets
-# MAGIC under scope `financial-data`.
+# MAGIC **Pre-requisitos:** credenciais do service principal armazenadas nos Databricks Secrets
+# MAGIC no scope `financial-data`.
 
 # COMMAND ----------
 

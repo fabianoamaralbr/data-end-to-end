@@ -2,7 +2,7 @@
   "name": "pl_ingest_financial_data",
   "type": "Microsoft.DataFactory/factories/pipelines",
   "properties": {
-    "description": "Ingests financial OHLCV data from Kaggle (via HTTP) into ADLS raw container, then triggers the Databricks medallion workflow.",
+    "description": "Ingere dados financeiros OHLCV do Kaggle (via HTTP) no container raw do ADLS e em seguida dispara o workflow medallion no Databricks.",
     "parameters": {
       "storageAccountName": {
         "type": "string",
@@ -21,7 +21,7 @@
       {
         "name": "CopyKaggleToRaw",
         "type": "Copy",
-        "description": "Downloads CSV from Kaggle API and lands it in the ADLS raw container.",
+        "description": "Faz download do CSV da API do Kaggle e deposita no container raw do ADLS.",
         "typeProperties": {
           "source": {
             "type": "DelimitedTextSource",
@@ -80,7 +80,7 @@
       {
         "name": "TriggerMedallionPipeline",
         "type": "DatabricksSparkPython",
-        "description": "Triggers the Databricks medallion workflow (bronze -> silver -> gold) after raw data lands.",
+        "description": "Dispara o workflow medallion do Databricks (bronze -> silver -> gold) apos a chegada dos dados brutos.",
         "dependsOn": [
           {
             "activity": "CopyKaggleToRaw",
@@ -110,7 +110,7 @@
       {
         "name": "LogIngestionMetadata",
         "type": "SetVariable",
-        "description": "Stores ingestion run timestamp for audit trail.",
+        "description": "Armazena o timestamp de execucao da ingestao para rastreabilidade.",
         "dependsOn": [
           {
             "activity": "TriggerMedallionPipeline",

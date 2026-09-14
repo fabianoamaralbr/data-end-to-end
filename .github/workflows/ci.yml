@@ -13,63 +13,63 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install ruff
+      - name: Instalar ruff
         run: pip install ruff==0.4.9
 
-      - name: Run ruff
+      - name: Executar ruff
         run: ruff check databricks/notebooks/ tests/ scripts/
 
   test:
-    name: Unit Tests (PySpark)
+    name: Testes Unitarios (PySpark)
     runs-on: ubuntu-latest
     needs: lint
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Java 11 (PySpark dependency)
+      - name: Configurar Java 11 (dependencia do PySpark)
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: "11"
 
-      - name: Set up Python
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Instalar dependencias
         run: pip install -r requirements-dev.txt
 
-      - name: Run unit tests
+      - name: Executar testes unitarios
         run: pytest tests/unit/ -v --tb=short --cov=tests --cov-report=xml
 
-      - name: Upload coverage
+      - name: Publicar cobertura
         uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: coverage.xml
 
   terraform-validate:
-    name: Terraform Validate
+    name: Validacao Terraform
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Terraform
+      - name: Configurar Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.8.4"
 
-      - name: Terraform Init (no backend)
+      - name: Terraform Init (sem backend)
         working-directory: infra
         run: terraform init -backend=false
 
@@ -77,6 +77,6 @@ jobs:
         working-directory: infra
         run: terraform validate
 
-      - name: Terraform Format Check
+      - name: Verificacao de formatacao Terraform
         working-directory: infra
         run: terraform fmt -check -recursive

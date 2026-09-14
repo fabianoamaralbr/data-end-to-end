@@ -3,7 +3,7 @@
   "type": "Microsoft.DataFactory/factories/linkedservices",
   "properties": {
     "type": "AzureBlobFS",
-    "description": "Azure Data Lake Storage Gen2 — stores raw, bronze, silver, gold containers",
+    "description": "Azure Data Lake Storage Gen2 — armazena os containers raw, bronze, silver e gold",
     "typeProperties": {
       "url": "https://@{linkedService().storageAccountName}.dfs.core.windows.net",
       "accountKey": {

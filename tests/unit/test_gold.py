@@ -1,4 +1,4 @@
-"""Unit tests for the gold aggregation logic (moving averages, lag returns, daily summary)."""
+"""Testes unitarios para a logica de agregacao da camada gold (medias moveis, retornos com lag, resumo diario)."""
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import avg, col, first, lag, round as spark_round
 from pyspark.sql.window import Window
@@ -25,9 +25,9 @@ def test_gold_ma7_uses_7_row_rolling_window(spark):
     window = Window.partitionBy("Symbol").orderBy("Date").rowsBetween(-6, 0)
     result = aapl.withColumn("ma_close_7d", avg("Close").over(window))
     rows = result.orderBy("Date").collect()
-    # First row: only 1 row in window, so ma == Close
+    # primeira linha: apenas 1 linha na janela, portanto ma == Close
     assert abs(rows[0]["ma_close_7d"] - rows[0]["Close"]) < 0.01
-    # 7th row: full 7-row average
+    # setima linha: media completa de 7 linhas
     closes = [r["Close"] for r in rows[:7]]
     expected_ma7 = sum(closes) / 7
     assert abs(rows[6]["ma_close_7d"] - expected_ma7) < 0.01
@@ -55,7 +55,7 @@ def test_gold_partitions_moving_averages_by_symbol(spark):
     df = _make_silver_df(spark)
     window = Window.partitionBy("Symbol").orderBy("Date").rowsBetween(-6, 0)
     result = df.withColumn("ma_close_7d", avg("Close").over(window))
-    # MSFT's MA should never include AAPL data
+    # a MA da MSFT nunca deve incluir dados da AAPL
     msft_rows = result.filter(col("Symbol") == "MSFT").orderBy("Date").collect()
     aapl_rows = result.filter(col("Symbol") == "AAPL").orderBy("Date").collect()
     assert msft_rows[0]["ma_close_7d"] != aapl_rows[0]["ma_close_7d"]
@@ -63,7 +63,7 @@ def test_gold_partitions_moving_averages_by_symbol(spark):
 
 def test_gold_daily_summary_aggregates_correctly(spark):
     from pyspark.sql.functions import first as spark_first, spark_max, spark_min, spark_sum
-    # Alias to avoid name collision
+    # alias para evitar conflito de nomes
     from pyspark.sql.functions import max as fmax, min as fmin, sum as fsum
     df = _make_silver_df(spark)
     summary = (

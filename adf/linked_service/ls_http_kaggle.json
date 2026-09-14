@@ -3,7 +3,7 @@
   "type": "Microsoft.DataFactory/factories/linkedservices",
   "properties": {
     "type": "HttpServer",
-    "description": "Kaggle public dataset HTTP endpoint (used for initial seed; production uses ls_adls_gen2 after download_kaggle_data.py uploads to raw)",
+    "description": "Endpoint HTTP do dataset publico do Kaggle (usado para carga inicial; em producao o ls_adls_gen2 e usado apos o upload via download_kaggle_data.py)",
     "typeProperties": {
       "url": "https://www.kaggle.com/api/v1/",
       "enableServerCertificateValidation": true,

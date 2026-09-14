@@ -1,8 +1,8 @@
-"""Shared pytest fixtures — provides a local PySpark session for unit tests.
+"""Fixtures compartilhadas do pytest — fornece uma sessao PySpark local para os testes unitarios.
 
-Requirements: Java 11+ must be on PATH (PySpark dependency).
-In CI, GitHub Actions installs Java via actions/setup-java.
-Locally: `sudo apt install default-jdk` or install from https://adoptium.net
+Requisitos: Java 11+ precisa estar no PATH (dependencia do PySpark).
+No CI, o GitHub Actions instala o Java via actions/setup-java.
+Localmente: `sudo apt install default-jdk` ou instale em https://adoptium.net
 """
 import shutil
 import subprocess
@@ -18,7 +18,7 @@ def _java_available() -> bool:
 
 def pytest_collection_modifyitems(items):
     if not _java_available():
-        skip = pytest.mark.skip(reason="Java not found on PATH — required for PySpark. Install Java 11+.")
+        skip = pytest.mark.skip(reason="Java nao encontrado no PATH — obrigatorio para o PySpark. Instale o Java 11+.")
         for item in items:
             item.add_marker(skip)
 
