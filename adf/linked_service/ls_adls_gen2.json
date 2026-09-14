@@ -1,0 +1,25 @@
+{
+  "name": "ls_adls_gen2",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "type": "AzureBlobFS",
+    "description": "Azure Data Lake Storage Gen2 — stores raw, bronze, silver, gold containers",
+    "typeProperties": {
+      "url": "https://@{linkedService().storageAccountName}.dfs.core.windows.net",
+      "accountKey": {
+        "type": "AzureKeyVaultSecret",
+        "store": {
+          "referenceName": "ls_key_vault",
+          "type": "LinkedServiceReference"
+        },
+        "secretName": "adls-account-key"
+      }
+    },
+    "parameters": {
+      "storageAccountName": {
+        "type": "string"
+      }
+    },
+    "annotations": ["financial-data", "adls-gen2"]
+  }
+}

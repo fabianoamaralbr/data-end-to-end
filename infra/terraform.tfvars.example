@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and fill in real values (never commit .tfvars)
+project     = "financial-data"
+environment = "dev"
+location    = "eastus2"
+
+databricks_sku             = "premium"
+adls_account_tier          = "Standard"
+adls_replication           = "LRS"
+
+synapse_sql_admin_login    = "sqladminuser"
+synapse_sql_admin_password = "Ch4ng3Me!Str0ng"

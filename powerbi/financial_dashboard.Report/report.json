@@ -1,0 +1,177 @@
+{
+  "id": "financial-dashboard",
+  "name": "Financial Data Dashboard",
+  "description": "End-to-end financial analytics dashboard powered by Azure Synapse + Delta Lake",
+  "theme": {
+    "name": "Financial Data Theme",
+    "colors": ["#002056", "#1f4fa0", "#cdac80", "#a89274", "#e9e9e9"],
+    "foreground": "#e9e9e9",
+    "background": "#002056",
+    "tableAccent": "#cdac80",
+    "dataColors": ["#cdac80", "#1f4fa0", "#a89274", "#e9e9e9", "#002056"]
+  },
+  "pages": [
+    {
+      "name": "Overview",
+      "displayName": "Market Overview",
+      "width": 1280,
+      "height": 720,
+      "background": {"color": "#002056", "transparency": 0},
+      "visualContainers": [
+        {
+          "id": "kpi_latest_close",
+          "type": "card",
+          "displayName": "Latest Close",
+          "position": {"x": 20, "y": 80, "width": 200, "height": 100},
+          "dataFields": [{"table": "daily_summary", "measure": "Latest Close"}],
+          "config": {"fontColor": "#cdac80", "fontSize": 28, "labelColor": "#e9e9e9"}
+        },
+        {
+          "id": "kpi_avg_return",
+          "type": "card",
+          "displayName": "Avg Daily Return",
+          "position": {"x": 240, "y": 80, "width": 200, "height": 100},
+          "dataFields": [{"table": "daily_summary", "measure": "Avg Daily Return %"}],
+          "config": {"fontColor": "#cdac80", "fontSize": 28, "labelColor": "#e9e9e9"}
+        },
+        {
+          "id": "kpi_total_volume",
+          "type": "card",
+          "displayName": "Total Volume (M)",
+          "position": {"x": 460, "y": 80, "width": 200, "height": 100},
+          "dataFields": [{"table": "daily_summary", "measure": "Total Volume (M)"}],
+          "config": {"fontColor": "#cdac80", "fontSize": 28, "labelColor": "#e9e9e9"}
+        },
+        {
+          "id": "kpi_trend",
+          "type": "card",
+          "displayName": "Trend Signal",
+          "position": {"x": 680, "y": 80, "width": 200, "height": 100},
+          "dataFields": [{"table": "daily_summary", "measure": "Trend Signal"}],
+          "config": {"fontColor": "#cdac80", "fontSize": 24, "labelColor": "#e9e9e9"}
+        },
+        {
+          "id": "line_price_history",
+          "type": "lineChart",
+          "displayName": "Price History with Moving Averages",
+          "position": {"x": 20, "y": 200, "width": 700, "height": 300},
+          "axes": {
+            "x": {"field": {"table": "daily_summary", "column": "Date"}},
+            "y": [
+              {"field": {"table": "daily_summary", "column": "Close"}, "displayName": "Close"},
+              {"field": {"table": "daily_summary", "measure": "MA Close 7D"},  "displayName": "MA 7D"},
+              {"field": {"table": "daily_summary", "measure": "MA Close 30D"}, "displayName": "MA 30D"}
+            ]
+          },
+          "config": {
+            "lineColors": ["#cdac80", "#1f4fa0", "#e9e9e9"],
+            "backgroundColor": "#002056",
+            "gridlineColor": "#1f4fa0"
+          }
+        },
+        {
+          "id": "bar_daily_return",
+          "type": "columnChart",
+          "displayName": "Daily Return % by Date",
+          "position": {"x": 740, "y": 200, "width": 520, "height": 300},
+          "axes": {
+            "x": {"field": {"table": "daily_summary", "column": "Date"}},
+            "y": {"field": {"table": "daily_summary", "column": "Daily Return %"}}
+          },
+          "config": {
+            "positiveColor": "#cdac80",
+            "negativeColor": "#a89274",
+            "backgroundColor": "#002056"
+          }
+        },
+        {
+          "id": "scatter_volume_vs_return",
+          "type": "scatterChart",
+          "displayName": "Volume vs Return by Symbol",
+          "position": {"x": 20, "y": 520, "width": 400, "height": 180},
+          "axes": {
+            "x": {"field": {"table": "daily_summary", "measure": "Total Volume (M)"}},
+            "y": {"field": {"table": "daily_summary", "measure": "Avg Daily Return %"}},
+            "details": {"field": {"table": "daily_summary", "column": "Symbol"}}
+          }
+        },
+        {
+          "id": "table_symbol_perf",
+          "type": "tableEx",
+          "displayName": "Symbol Performance Summary",
+          "position": {"x": 440, "y": 520, "width": 820, "height": 180},
+          "columns": [
+            {"field": {"table": "daily_summary", "column": "Symbol"}},
+            {"field": {"table": "daily_summary", "measure": "Latest Close"}},
+            {"field": {"table": "daily_summary", "measure": "Avg Daily Return %"}},
+            {"field": {"table": "daily_summary", "measure": "MA Close 7D"}},
+            {"field": {"table": "daily_summary", "measure": "MA Close 30D"}},
+            {"field": {"table": "daily_summary", "measure": "Trend Signal"}},
+            {"field": {"table": "daily_summary", "measure": "Total Volume (M)"}}
+          ],
+          "config": {
+            "headerFontColor": "#002056",
+            "headerBackground": "#cdac80",
+            "alternateRowColor": "#1f4fa0"
+          }
+        }
+      ],
+      "filters": [
+        {
+          "type": "slicer",
+          "field": {"table": "daily_summary", "column": "Symbol"},
+          "position": {"x": 900, "y": 20, "width": 360, "height": 50}
+        },
+        {
+          "type": "dateSlicer",
+          "field": {"table": "Date", "column": "Date"},
+          "position": {"x": 20, "y": 20, "width": 860, "height": 50}
+        }
+      ]
+    },
+    {
+      "name": "TechnicalAnalysis",
+      "displayName": "Technical Analysis",
+      "width": 1280,
+      "height": 720,
+      "background": {"color": "#002056", "transparency": 0},
+      "visualContainers": [
+        {
+          "id": "candlestick_price",
+          "type": "lineChart",
+          "displayName": "OHLC Price Chart",
+          "position": {"x": 20, "y": 80, "width": 820, "height": 350},
+          "axes": {
+            "x": {"field": {"table": "daily_summary", "column": "Date"}},
+            "y": [
+              {"field": {"table": "daily_summary", "column": "High"},  "displayName": "High"},
+              {"field": {"table": "daily_summary", "column": "Low"},   "displayName": "Low"},
+              {"field": {"table": "daily_summary", "column": "Close"}, "displayName": "Close"}
+            ]
+          }
+        },
+        {
+          "id": "bar_volume",
+          "type": "columnChart",
+          "displayName": "Trading Volume",
+          "position": {"x": 20, "y": 450, "width": 820, "height": 240},
+          "axes": {
+            "x": {"field": {"table": "daily_summary", "column": "Date"}},
+            "y": {"field": {"table": "daily_summary", "column": "Total Volume"}}
+          }
+        },
+        {
+          "id": "line_cumulative_return",
+          "type": "lineChart",
+          "displayName": "Cumulative Return % by Symbol",
+          "position": {"x": 860, "y": 80, "width": 400, "height": 610},
+          "axes": {
+            "x": {"field": {"table": "daily_summary", "column": "Date"}},
+            "y": {"field": {"table": "daily_summary", "column": "Cumulative Return %"}},
+            "legend": {"field": {"table": "daily_summary", "column": "Symbol"}}
+          }
+        }
+      ]
+    }
+  ]
+}

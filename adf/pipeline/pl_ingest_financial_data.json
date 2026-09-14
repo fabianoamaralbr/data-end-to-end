@@ -1,0 +1,140 @@
+{
+  "name": "pl_ingest_financial_data",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Ingests financial OHLCV data from Kaggle (via HTTP) into ADLS raw container, then triggers the Databricks medallion workflow.",
+    "parameters": {
+      "storageAccountName": {
+        "type": "string",
+        "defaultValue": "stfinancialdata"
+      },
+      "targetFileName": {
+        "type": "string",
+        "defaultValue": "financial_data.csv"
+      },
+      "databricksJobId": {
+        "type": "string",
+        "defaultValue": ""
+      }
+    },
+    "activities": [
+      {
+        "name": "CopyKaggleToRaw",
+        "type": "Copy",
+        "description": "Downloads CSV from Kaggle API and lands it in the ADLS raw container.",
+        "typeProperties": {
+          "source": {
+            "type": "DelimitedTextSource",
+            "storeSettings": {
+              "type": "HttpReadSettings",
+              "requestMethod": "GET"
+            },
+            "formatSettings": {
+              "type": "DelimitedTextReadSettings"
+            }
+          },
+          "sink": {
+            "type": "DelimitedTextSink",
+            "storeSettings": {
+              "type": "AzureBlobFSWriteSettings"
+            },
+            "formatSettings": {
+              "type": "DelimitedTextWriteSettings",
+              "quoteAllText": false,
+              "fileExtension": ".csv"
+            }
+          },
+          "enableStaging": false,
+          "translator": {
+            "type": "TabularTranslator",
+            "typeConversion": true,
+            "typeConversionSettings": {
+              "allowDataTruncation": true,
+              "treatBooleanAsNumber": false
+            }
+          }
+        },
+        "inputs": [
+          {
+            "referenceName": "ds_http_kaggle_csv",
+            "type": "DatasetReference"
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "ds_adls_raw_csv",
+            "type": "DatasetReference",
+            "parameters": {
+              "storageAccountName": {
+                "value": "@pipeline().parameters.storageAccountName",
+                "type": "Expression"
+              },
+              "fileName": {
+                "value": "@pipeline().parameters.targetFileName",
+                "type": "Expression"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "TriggerMedallionPipeline",
+        "type": "DatabricksSparkPython",
+        "description": "Triggers the Databricks medallion workflow (bronze -> silver -> gold) after raw data lands.",
+        "dependsOn": [
+          {
+            "activity": "CopyKaggleToRaw",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ],
+        "typeProperties": {
+          "pythonFile": "dbfs:/notebooks/01_raw_to_bronze.py",
+          "parameters": [
+            "--storage-account",
+            {
+              "value": "@pipeline().parameters.storageAccountName",
+              "type": "Expression"
+            },
+            "--source-file",
+            {
+              "value": "@pipeline().parameters.targetFileName",
+              "type": "Expression"
+            }
+          ]
+        },
+        "linkedServiceName": {
+          "referenceName": "ls_databricks",
+          "type": "LinkedServiceReference"
+        }
+      },
+      {
+        "name": "LogIngestionMetadata",
+        "type": "SetVariable",
+        "description": "Stores ingestion run timestamp for audit trail.",
+        "dependsOn": [
+          {
+            "activity": "TriggerMedallionPipeline",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ],
+        "typeProperties": {
+          "variableName": "ingestionTimestamp",
+          "value": {
+            "value": "@utcnow()",
+            "type": "Expression"
+          }
+        }
+      }
+    ],
+    "variables": {
+      "ingestionTimestamp": {
+        "type": "String"
+      }
+    },
+    "annotations": ["financial-data", "ingestion", "medallion"],
+    "concurrency": 1,
+    "policy": {
+      "elapsedTimeMetric": {}
+    }
+  }
+}

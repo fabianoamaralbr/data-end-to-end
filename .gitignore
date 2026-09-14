@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Secrets
+.env
+*.env.local
+*.env.*.local
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# Databricks
+.databricks/
+*.dbc
+
+# Power BI
+*.pbix
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (large files — use DVC or ADLS)
+data/raw/
+*.parquet
+*.delta
+
+# Notebooks output (keep source, strip output)
+*.ipynb_checkpoints/

@@ -1,0 +1,23 @@
+{
+  "name": "ds_http_kaggle_csv",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "type": "DelimitedText",
+    "description": "Source: Kaggle financial dataset downloaded via HTTP",
+    "linkedServiceName": {
+      "referenceName": "ls_http_kaggle",
+      "type": "LinkedServiceReference"
+    },
+    "typeProperties": {
+      "location": {
+        "type": "HttpServerLocation",
+        "relativeUrl": "datasets/adhoppin/financial-data/download?datasetVersionNumber=1"
+      },
+      "columnDelimiter": ",",
+      "escapeChar": "\\",
+      "firstRowAsHeader": true,
+      "quoteChar": "\""
+    },
+    "annotations": ["kaggle", "source", "csv"]
+  }
+}

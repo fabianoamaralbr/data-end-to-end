@@ -1,0 +1,30 @@
+{
+  "name": "ls_http_kaggle",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "type": "HttpServer",
+    "description": "Kaggle public dataset HTTP endpoint (used for initial seed; production uses ls_adls_gen2 after download_kaggle_data.py uploads to raw)",
+    "typeProperties": {
+      "url": "https://www.kaggle.com/api/v1/",
+      "enableServerCertificateValidation": true,
+      "authenticationType": "Basic",
+      "userName": {
+        "type": "AzureKeyVaultSecret",
+        "store": {
+          "referenceName": "ls_key_vault",
+          "type": "LinkedServiceReference"
+        },
+        "secretName": "kaggle-username"
+      },
+      "password": {
+        "type": "AzureKeyVaultSecret",
+        "store": {
+          "referenceName": "ls_key_vault",
+          "type": "LinkedServiceReference"
+        },
+        "secretName": "kaggle-api-key"
+      }
+    },
+    "annotations": ["kaggle", "financial-data", "source"]
+  }
+}
