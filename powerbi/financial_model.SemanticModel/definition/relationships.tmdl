@@ -1,0 +1,4 @@
+relationship daily_summary_Date
+	fromColumn: daily_summary.Date
+	toColumn: Date.Date
+

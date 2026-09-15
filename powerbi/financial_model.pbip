@@ -4,7 +4,7 @@
   "artifacts": [
     {
       "report": {
-        "path": "financial_model.Report"
+        "path": "financial_dashboard.Report"
       }
     }
   ],

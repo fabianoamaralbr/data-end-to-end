@@ -1,0 +1,53 @@
+/// Date dimension table
+table Date
+	lineageTag: 976c4c66-83bb-4e8a-8ad4-d2f7562d6161
+	dataCategory: Time
+
+	column Date
+		dataType: dateTime
+		isKey
+		formatString: Short Date
+		lineageTag: 4f41e775-3d7d-43de-b5a1-8aae2fa87a21
+
+	column Year
+		dataType: int64
+		lineageTag: 00aa8f85-1426-4469-9550-77e54a95a531
+
+	column Quarter
+		dataType: int64
+		lineageTag: 5a374241-3849-409b-97af-6054b787b242
+
+	column Month
+		dataType: int64
+		lineageTag: ef22128d-5bfb-4e20-929a-433971752ff2
+
+	column 'Month Name'
+		dataType: string
+		lineageTag: ce3b0f90-6d73-40e9-861c-46c9f1ef9206
+
+	column Week
+		dataType: int64
+		lineageTag: 949979a2-6e75-44bc-ab16-9c25d94899d7
+
+	column 'Day of Week'
+		dataType: string
+		lineageTag: 8e6c771e-25f4-4be2-a116-b732de5e3151
+
+	partition Date = m
+		mode: import
+		source =
+				let
+				    StartDate = #date(2020, 1, 1),
+				    EndDate   = Date.From(DateTime.LocalNow()),
+				    DateList  = List.Dates(StartDate, Duration.Days(EndDate - StartDate) + 1, #duration(1, 0, 0, 0)),
+				    Source    = Table.FromList(DateList, Splitter.SplitByNothing(), {"Date"}),
+				    Typed     = Table.TransformColumnTypes(Source, {{"Date", type date}}),
+				    AddYear   = Table.AddColumn(Typed, "Year",       each Date.Year([Date]),         Int64.Type),
+				    AddQ      = Table.AddColumn(AddYear, "Quarter",  each Date.QuarterOfYear([Date]),Int64.Type),
+				    AddMonth  = Table.AddColumn(AddQ, "Month",       each Date.Month([Date]),        Int64.Type),
+				    AddMName  = Table.AddColumn(AddMonth, "Month Name", each Date.MonthName([Date]), type text),
+				    AddWeek   = Table.AddColumn(AddMName, "Week",    each Date.WeekOfYear([Date]),   Int64.Type),
+				    AddDOW    = Table.AddColumn(AddWeek, "Day of Week", each Date.DayOfWeekName([Date]), type text)
+				in
+				    AddDOW
+

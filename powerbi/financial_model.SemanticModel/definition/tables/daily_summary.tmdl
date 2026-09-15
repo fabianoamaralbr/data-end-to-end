@@ -1,0 +1,119 @@
+/// Gold layer daily aggregated financial data with moving averages and return metrics
+table daily_summary
+	lineageTag: 167c3c15-e711-43d7-8012-ee4207a606c8
+	dataCategory: Time
+
+	/// Most recent closing price for selected symbol
+	measure 'Latest Close' = LASTNONBLANK(daily_summary[Close], 1)
+		formatString: $ #,0.00
+		lineageTag: 94602f0d-415b-4d48-ac39-9d187b67a32a
+
+	/// Average daily return over selected period
+	measure 'Avg Daily Return %' = AVERAGE(daily_summary[Daily Return %])
+		formatString: 0.00%
+		lineageTag: c482f86a-5ed2-4c78-a8ce-bc2c7c103028
+
+	/// Total traded volume in millions
+	measure 'Total Volume (M)' = DIVIDE(SUM(daily_summary[Total Volume]), 1000000)
+		formatString: #,0.0
+		lineageTag: 6f9d1a40-f33d-41e6-8c39-bb4d0bd0dfae
+
+	measure 'All-Time High' = MAX(daily_summary[High])
+		formatString: $ #,0.00
+		lineageTag: 27c45153-d1f1-40c7-a174-585e47448ad3
+
+	measure 'All-Time Low' = MIN(daily_summary[Low])
+		formatString: $ #,0.00
+		lineageTag: a3167a09-c96f-4102-846b-f1988df10ea8
+
+	/// Intraday price range as % of All-Time Low
+	measure 'Price Range' = DIVIDE([All-Time High] - [All-Time Low], [All-Time Low], BLANK())
+		formatString: 0.00%
+		lineageTag: e598df7c-fd95-4755-9bff-9125f619e0c1
+
+	/// Golden/death cross signal based on MA7 vs MA30
+	measure 'Trend Signal' = IF([Avg MA Close 7D] > [Avg MA Close 30D], "BULLISH", IF([Avg MA Close 7D] < [Avg MA Close 30D], "BEARISH", "NEUTRAL"))
+		lineageTag: f6ddc28d-b410-41cc-b495-534da2003cdb
+
+	measure 'Avg MA Close 7D' = AVERAGE(daily_summary[MA Close 7D])
+		formatString: $ #,0.00
+		lineageTag: fdd787da-d39c-4817-bc74-512a31d17871
+
+	measure 'Avg MA Close 30D' = AVERAGE(daily_summary[MA Close 30D])
+		formatString: $ #,0.00
+		lineageTag: 0df7cdc5-94f4-4b8d-9b6c-676871af142e
+
+	column Symbol
+		dataType: string
+		lineageTag: 0b147a89-7825-4017-aa2b-a2c380150058
+		sourceColumn: Symbol
+
+	column Date
+		dataType: dateTime
+		isKey
+		formatString: Short Date
+		lineageTag: f82bfd81-6558-4292-8cd9-94bf3b59205d
+		sourceColumn: Date
+
+	column Open
+		dataType: double
+		lineageTag: 254960c4-cbb5-4367-9619-6704a82e4d9c
+		sourceColumn: open
+
+	column High
+		dataType: double
+		lineageTag: 339c0b0b-807f-475a-afcc-48c5987dcfdc
+		sourceColumn: high
+
+	column Low
+		dataType: double
+		lineageTag: 3331d9b6-5b11-45a1-85b3-a8d2011bf217
+		sourceColumn: low
+
+	column Close
+		dataType: double
+		lineageTag: fbefea1b-989b-4df5-9f4d-118fb0d8d744
+		sourceColumn: close
+
+	column 'Total Volume'
+		dataType: int64
+		lineageTag: a08afbf5-f619-4d89-8111-cb96719cee01
+		sourceColumn: total_volume
+
+	column 'Daily Return %'
+		dataType: double
+		formatString: 0.00%
+		lineageTag: 3f611c01-522b-4690-b0e6-40a35f03752e
+		sourceColumn: daily_return_pct
+
+	column 'MA Close 7D'
+		dataType: double
+		lineageTag: 381cacde-aa0f-479c-a976-aa81344ef772
+		sourceColumn: ma_close_7d
+
+	column 'MA Close 30D'
+		dataType: double
+		lineageTag: ab8f401d-1f14-421b-b9ac-5a1256c48eda
+		sourceColumn: ma_close_30d
+
+	column 'Day over Day Return %'
+		dataType: double
+		formatString: 0.00%
+		lineageTag: bb16ce09-9762-4475-99d0-788964098c25
+		sourceColumn: day_over_day_return_pct
+
+	column 'Cumulative Return %'
+		dataType: double
+		formatString: 0.00%
+		lineageTag: a409ba53-6b63-4e58-8e1c-f6b3ee534a02
+		sourceColumn: cumulative_return_pct
+
+	partition daily_summary = m
+		mode: directQuery
+		source =
+				let
+				    Source = Sql.Database("synw-financial-data-ondemand.sql.azuresynapse.net", "financial_analytics"),
+				    gold_daily_summary = Source{[Schema="gold", Item="daily_summary"]}[Data]
+				in
+				    gold_daily_summary
+
