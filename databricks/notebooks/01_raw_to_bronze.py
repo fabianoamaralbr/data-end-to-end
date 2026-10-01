@@ -1,88 +1,79 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 01 — Raw para Bronze
+# MAGIC # 01 — Raw para Bronze (incremental e idempotente)
 # MAGIC
-# MAGIC **Camada:** Bronze (ingestao bruta no Delta Lake)
+# MAGIC - **Auto Loader** (`cloudFiles`) descobre apenas arquivos novos/alterados no container
+# MAGIC   `raw`; o checkpoint registra o que ja foi processado.
+# MAGIC - Tudo e lido como **string** com schema explicito; colunas inesperadas vao para
+# MAGIC   `_rescued_data` (e depois para a quarentena da silver), nunca evoluem o schema.
+# MAGIC - Cada registro recebe uma **chave de ingestao** (hash de arquivo + conteudo) e entra
+# MAGIC   via `MERGE` insert-only: reexecutar a ingestao, ou perder o checkpoint, nao duplica dados.
 # MAGIC
-# MAGIC Le os arquivos CSV do container `raw`, adiciona colunas de metadados de ingestao
-# MAGIC e grava no container `bronze` no formato Delta Lake.
-# MAGIC Sem logica de negocio — os dados chegam exatamente como foram ingeridos.
-# MAGIC
-# MAGIC | Metrica | Descricao |
-# MAGIC |---------|-----------|
-# MAGIC | rows_read | Total de linhas lidas do CSV |
-# MAGIC | rows_written | Linhas gravadas no Delta bronze |
-# MAGIC | columns_in | Quantidade de colunas do CSV |
-# MAGIC | columns_out | Quantidade de colunas no Delta bronze |
+# MAGIC Logica em `src/transforms/bronze.py` e `src/transforms/batch.py` (coberta por testes).
 
 # COMMAND ----------
 
+import os
 import sys
-from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), "..", "..", "src")))
 
 from delta.tables import DeltaTable
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import current_timestamp, input_file_name, lit
+from pyspark.sql import functions as F
+
+from transforms.batch import process_bronze_batch
+from transforms.datasets import abfss, get_dataset
 
 # COMMAND ----------
 
-spark = SparkSession.builder.appName("raw_to_bronze").getOrCreate()
+dbutils.widgets.text("catalog", "financial")
+dbutils.widgets.text("storage_account", "")
+dbutils.widgets.dropdown("dataset", "ohlcv", ["ohlcv", "bcb_sgs"])
+dbutils.widgets.text("run_id", "manual")
 
-spark.conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-spark.conf.set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+CATALOG = dbutils.widgets.get("catalog")
+STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
+DATASET = get_dataset(dbutils.widgets.get("dataset"))
+RUN_ID = dbutils.widgets.get("run_id")
+
+RAW_PATH = abfss(STORAGE_ACCOUNT, "raw", DATASET.raw_path)
+CHECKPOINT = DATASET.checkpoint(STORAGE_ACCOUNT, "bronze")
+TARGET = DeltaTable.forName(spark, DATASET.bronze.full_name(CATALOG))
 
 # COMMAND ----------
 
-RAW_PATH    = "/mnt/raw/financial-data/"
-BRONZE_PATH = "/mnt/bronze/financial_data/"
-RUN_TS      = datetime.now(timezone.utc).isoformat()
-
-# COMMAND ----------
-# MAGIC %md ## 1. Leitura do CSV bruto
-
-raw_df = (
-    spark.read
-    .option("header", "true")
-    .option("inferSchema", "true")
-    .option("mode", "PERMISSIVE")
-    .csv(RAW_PATH)
+raw_stream = (
+    spark.readStream.format("cloudFiles")
+    .option("cloudFiles.format", DATASET.raw_format)
+    .options(**DATASET.raw_options)
+    .option("rescuedDataColumn", "_rescued_data")
+    # Arquivo reescrito na origem (ex.: janela do BCB reprocessada) e lido de novo;
+    # a chave de ingestao descarta o que nao mudou.
+    .option("cloudFiles.allowOverwrites", "true")
+    .schema(DATASET.raw_schema)
+    .load(RAW_PATH)
+    .select(
+        "*",
+        F.col("_metadata.file_path").alias("_source_file"),
+        F.col("_metadata.file_modification_time").alias("_source_modified_at"),
+    )
 )
 
-rows_read    = raw_df.count()
-columns_in   = len(raw_df.columns)
-
-print(f"[bronze] rows_read={rows_read}  columns_in={columns_in}")
-
-# COMMAND ----------
-# MAGIC %md ## 2. Adicao de colunas de metadados de ingestao
-
-bronze_df = (
-    raw_df
-    .withColumn("_ingested_at", current_timestamp())
-    .withColumn("_source_file", input_file_name())
-    .withColumn("_pipeline_run_ts", lit(RUN_TS))
+query = (
+    raw_stream.writeStream
+    .foreachBatch(
+        lambda batch_df, batch_id: process_bronze_batch(
+            batch_df, batch_id, dataset=DATASET, target=TARGET, run_id=RUN_ID
+        )
+    )
+    .option("checkpointLocation", CHECKPOINT)
+    .trigger(availableNow=True)
+    .start()
 )
-
-columns_out = len(bronze_df.columns)
-
-# COMMAND ----------
-# MAGIC %md ## 3. Gravacao no Delta Lake (append — suporta execucoes incrementais)
-
-(
-    bronze_df.write
-    .format("delta")
-    .mode("append")
-    .option("mergeSchema", "true")
-    .save(BRONZE_PATH)
-)
-
-rows_written = spark.read.format("delta").load(BRONZE_PATH).count()
-
-print(f"[bronze] rows_written={rows_written}  columns_out={columns_out}")
-print(f"[bronze] CONCLUIDO — tabela Delta em {BRONZE_PATH}")
+query.awaitTermination()
 
 # COMMAND ----------
-# MAGIC %md ## 4. Verificacao rapida de qualidade
 
-bronze_latest = spark.read.format("delta").load(BRONZE_PATH)
-display(bronze_latest.limit(5))
+progress = query.recentProgress
+rows_read = sum(p["numInputRows"] for p in progress)
+print(f"[bronze:{DATASET.name}] batches={len(progress)} rows_read={rows_read} run_id={RUN_ID}")

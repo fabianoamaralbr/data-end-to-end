@@ -2,7 +2,7 @@
   "name": "pl_ingest_financial_data",
   "type": "Microsoft.DataFactory/factories/pipelines",
   "properties": {
-    "description": "Ingere dados financeiros OHLCV do Kaggle (via HTTP) no container raw do ADLS e em seguida dispara o workflow medallion no Databricks.",
+    "description": "Carga historica (backfill) do dataset OHLCV do Kaggle no container raw do ADLS. Fonte estatica: a carga incremental diaria vem de pl_ingest_bcb_sgs. A chegada do arquivo dispara o job Databricks (file arrival trigger) — o ADF nao chama o Databricks diretamente.",
     "parameters": {
       "storageAccountName": {
         "type": "string",
@@ -11,10 +11,6 @@
       "targetFileName": {
         "type": "string",
         "defaultValue": "financial_data.csv"
-      },
-      "databricksJobId": {
-        "type": "string",
-        "defaultValue": ""
       }
     },
     "activities": [
@@ -75,63 +71,19 @@
               }
             }
           }
-        ]
-      },
-      {
-        "name": "TriggerMedallionPipeline",
-        "type": "DatabricksSparkPython",
-        "description": "Dispara o workflow medallion do Databricks (bronze -> silver -> gold) apos a chegada dos dados brutos.",
-        "dependsOn": [
-          {
-            "activity": "CopyKaggleToRaw",
-            "dependencyConditions": ["Succeeded"]
-          }
         ],
-        "typeProperties": {
-          "pythonFile": "dbfs:/notebooks/01_raw_to_bronze.py",
-          "parameters": [
-            "--storage-account",
-            {
-              "value": "@pipeline().parameters.storageAccountName",
-              "type": "Expression"
-            },
-            "--source-file",
-            {
-              "value": "@pipeline().parameters.targetFileName",
-              "type": "Expression"
-            }
-          ]
-        },
-        "linkedServiceName": {
-          "referenceName": "ls_databricks",
-          "type": "LinkedServiceReference"
-        }
-      },
-      {
-        "name": "LogIngestionMetadata",
-        "type": "SetVariable",
-        "description": "Armazena o timestamp de execucao da ingestao para rastreabilidade.",
-        "dependsOn": [
-          {
-            "activity": "TriggerMedallionPipeline",
-            "dependencyConditions": ["Succeeded"]
-          }
-        ],
-        "typeProperties": {
-          "variableName": "ingestionTimestamp",
-          "value": {
-            "value": "@utcnow()",
-            "type": "Expression"
-          }
+        "policy": {
+          "timeout": "0.01:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 120
         }
       }
     ],
-    "variables": {
-      "ingestionTimestamp": {
-        "type": "String"
-      }
-    },
-    "annotations": ["financial-data", "ingestion", "medallion"],
+    "annotations": [
+      "financial-data",
+      "ingestion",
+      "backfill"
+    ],
     "concurrency": 1,
     "policy": {
       "elapsedTimeMetric": {}

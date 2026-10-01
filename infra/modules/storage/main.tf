@@ -5,11 +5,11 @@ terraform {
 }
 
 variable "resource_group_name" { type = string }
-variable "location"            { type = string }
-variable "account_name"        { type = string }
-variable "account_tier"        { type = string }
-variable "replication_type"    { type = string }
-variable "tags"                { type = map(string) }
+variable "location" { type = string }
+variable "account_name" { type = string }
+variable "account_tier" { type = string }
+variable "replication_type" { type = string }
+variable "tags" { type = map(string) }
 
 resource "azurerm_storage_account" "adls" {
   name                     = var.account_name
@@ -18,7 +18,7 @@ resource "azurerm_storage_account" "adls" {
   account_tier             = var.account_tier
   account_replication_type = var.replication_type
   account_kind             = "StorageV2"
-  is_hns_enabled           = true  # habilita o namespace hierarquico do ADLS Gen2
+  is_hns_enabled           = true # habilita o namespace hierarquico do ADLS Gen2
 
   blob_properties {
     versioning_enabled = true
@@ -29,7 +29,9 @@ resource "azurerm_storage_account" "adls" {
 }
 
 locals {
-  containers = ["raw", "bronze", "silver", "gold"]
+  # catalog: managed storage do catalogo Unity Catalog
+  # synapse-root: filesystem padrao exigido pelo workspace Synapse
+  containers = ["raw", "bronze", "silver", "gold", "catalog", "synapse-root"]
 }
 
 resource "azurerm_storage_data_lake_gen2_filesystem" "layers" {
@@ -38,6 +40,8 @@ resource "azurerm_storage_data_lake_gen2_filesystem" "layers" {
   storage_account_id = azurerm_storage_account.adls.id
 }
 
-output "storage_account_id"   { value = azurerm_storage_account.adls.id }
+output "storage_account_id" { value = azurerm_storage_account.adls.id }
 output "storage_account_name" { value = azurerm_storage_account.adls.name }
 output "primary_dfs_endpoint" { value = azurerm_storage_account.adls.primary_dfs_endpoint }
+output "containers" { value = local.containers }
+output "synapse_filesystem_id" { value = azurerm_storage_data_lake_gen2_filesystem.layers["synapse-root"].id }

@@ -82,3 +82,30 @@ SELECT
     MAX([Date]) AS max_date
 FROM gold.daily_summary;
 GO
+
+-- ── 5. Data quality monitoring (daily rollup of per-batch metrics) ────────────
+-- Source for alerting/dashboards: quarantine rate per table per day.
+CREATE OR ALTER VIEW ops.vw_dq_daily AS
+SELECT
+    table_name,
+    CAST(measured_at AS DATE)                                       AS measured_date,
+    COUNT(*)                                                        AS batches,
+    SUM(rows_in)                                                    AS rows_in,
+    SUM(rows_valid)                                                 AS rows_valid,
+    SUM(rows_quarantined)                                           AS rows_quarantined,
+    SUM(rows_deduplicated)                                          AS rows_deduplicated,
+    CAST(SUM(rows_quarantined) AS FLOAT) / NULLIF(SUM(rows_in), 0)  AS quarantine_rate
+FROM ops.dq_metrics
+GROUP BY table_name, CAST(measured_at AS DATE);
+GO
+
+-- ── 6. Quarantine breakdown by rejection reason ───────────────────────────────
+CREATE OR ALTER VIEW ops.vw_quarantine_reasons AS
+SELECT
+    r.value                          AS rejection_reason,
+    CAST(q._quarantined_at AS DATE)  AS quarantined_date,
+    COUNT(*)                         AS rows_rejected
+FROM silver.financial_quarantine AS q
+CROSS APPLY STRING_SPLIT(q._rejection_reason, ';') AS r
+GROUP BY r.value, CAST(q._quarantined_at AS DATE);
+GO

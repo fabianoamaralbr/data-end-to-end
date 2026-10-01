@@ -1,109 +1,76 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 02 — Bronze para Silver
+# MAGIC # 02 — Bronze para Silver (incremental, com quarentena e circuit breaker)
 # MAGIC
-# MAGIC **Camada:** Silver (limpa, validada e enriquecida)
+# MAGIC Le **somente os registros novos** da bronze (stream Delta com checkpoint) e, por micro-batch:
 # MAGIC
-# MAGIC Transformacoes aplicadas:
-# MAGIC - Conversao de todas as colunas para os tipos corretos (Date, Double, Long)
-# MAGIC - Remocao de duplicatas exatas em (Date, Symbol)
-# MAGIC - Filtragem de linhas com preco Close nulo ou nao positivo
-# MAGIC - Calculo de `daily_return_pct` = (Close - Open) / Open * 100
-# MAGIC - Calculo de `intraday_range`   = High - Low
-# MAGIC - Calculo de `price_spread_pct` = (High - Low) / Open * 100
-# MAGIC - Particao por data para consultas eficientes nas camadas seguintes
+# MAGIC 1. valida o batch contra o contrato da bronze e tipa as colunas (`try_cast`);
+# MAGIC 2. separa os registros invalidos na **tabela de quarentena**, com o motivo da rejeicao;
+# MAGIC 3. deduplica de forma **deterministica** (window ordenada por ingestao, nao `dropDuplicates`);
+# MAGIC 4. grava as metricas do batch em `ops.dq_metrics`;
+# MAGIC 5. **falha o job** se a taxa de quarentena passar de `max_quarantine_rate`;
+# MAGIC 6. faz `MERGE` na silver por chave de negocio, mantendo sempre a versao mais recente.
+# MAGIC
+# MAGIC Sem `overwrite`, sem `overwriteSchema`, sem particionamento por data (o layout e
+# MAGIC otimizado com `ZORDER`). Logica em `src/transforms/` (coberta por testes).
 
 # COMMAND ----------
 
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import (
-    col,
-    current_timestamp,
-    lit,
-    round as spark_round,
-    to_date,
-)
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), "..", "..", "src")))
+
+from delta.tables import DeltaTable
+
+from transforms.batch import process_silver_batch
+from transforms.datasets import DQ_METRICS, get_dataset
+from transforms.tables import optimize
 
 # COMMAND ----------
 
-spark = SparkSession.builder.appName("bronze_to_silver").getOrCreate()
-spark.conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-spark.conf.set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+dbutils.widgets.text("catalog", "financial")
+dbutils.widgets.text("storage_account", "")
+dbutils.widgets.dropdown("dataset", "ohlcv", ["ohlcv", "bcb_sgs"])
+dbutils.widgets.text("run_id", "manual")
+dbutils.widgets.text("max_quarantine_rate", "0.05")
+
+CATALOG = dbutils.widgets.get("catalog")
+STORAGE_ACCOUNT = dbutils.widgets.get("storage_account")
+DATASET = get_dataset(dbutils.widgets.get("dataset"))
+RUN_ID = dbutils.widgets.get("run_id")
+MAX_QUARANTINE_RATE = float(dbutils.widgets.get("max_quarantine_rate"))
+
+SILVER = DATASET.silver.full_name(CATALOG)
+tables = {
+    "silver": DeltaTable.forName(spark, SILVER),
+    "quarantine": DeltaTable.forName(spark, DATASET.quarantine.full_name(CATALOG)),
+    "metrics": DeltaTable.forName(spark, DQ_METRICS.full_name(CATALOG)),
+}
 
 # COMMAND ----------
 
-BRONZE_PATH = "/mnt/bronze/financial_data/"
-SILVER_PATH = "/mnt/silver/financial_data/"
-
-# COMMAND ----------
-# MAGIC %md ## 1. Leitura do Delta bronze
-
-bronze_df = spark.read.format("delta").load(BRONZE_PATH)
-rows_bronze = bronze_df.count()
-print(f"[silver] rows_bronze={rows_bronze}")
-
-# COMMAND ----------
-# MAGIC %md ## 2. Conversao de tipos
-
-typed_df = (
-    bronze_df
-    .withColumn("Date",   to_date(col("Date"), "yyyy-MM-dd"))
-    .withColumn("Open",   col("Open").cast("double"))
-    .withColumn("High",   col("High").cast("double"))
-    .withColumn("Low",    col("Low").cast("double"))
-    .withColumn("Close",  col("Close").cast("double"))
-    .withColumn("Volume", col("Volume").cast("long"))
-    .withColumn("OpenInt", col("OpenInt").cast("long"))
-)
-
-# COMMAND ----------
-# MAGIC %md ## 3. Deduplicacao e filtragem de linhas invalidas
-
-clean_df = (
-    typed_df
-    .dropDuplicates(["Date", "Symbol"])
-    .filter(col("Close").isNotNull() & (col("Close") > 0))
-    .filter(col("Open").isNotNull()  & (col("Open")  > 0))
-    .filter(col("Date").isNotNull())
-)
-
-rows_clean = clean_df.count()
-rows_dropped = rows_bronze - rows_clean
-print(f"[silver] rows_clean={rows_clean}  rows_dropped={rows_dropped}")
-
-# COMMAND ----------
-# MAGIC %md ## 4. Calculo de metricas de negocio
-
-silver_df = (
-    clean_df
-    .withColumn(
-        "daily_return_pct",
-        spark_round((col("Close") - col("Open")) / col("Open") * 100, 4)
+query = (
+    spark.readStream.table(DATASET.bronze.full_name(CATALOG))
+    .writeStream
+    .foreachBatch(
+        lambda batch_df, batch_id: process_silver_batch(
+            batch_df, batch_id, dataset=DATASET, run_id=RUN_ID,
+            max_quarantine_rate=MAX_QUARANTINE_RATE, **tables,
+        )
     )
-    .withColumn(
-        "intraday_range",
-        spark_round(col("High") - col("Low"), 4)
-    )
-    .withColumn(
-        "price_spread_pct",
-        spark_round((col("High") - col("Low")) / col("Open") * 100, 4)
-    )
-    .withColumn("_transformed_at", current_timestamp())
+    .option("checkpointLocation", DATASET.checkpoint(STORAGE_ACCOUNT, "silver"))
+    .trigger(availableNow=True)
+    .start()
 )
+query.awaitTermination()
 
 # COMMAND ----------
-# MAGIC %md ## 5. Gravacao do Delta silver (overwrite com evolucao de schema, particao por Date)
 
-(
-    silver_df.write
-    .format("delta")
-    .mode("overwrite")
-    .option("overwriteSchema", "true")
-    .partitionBy("Date")
-    .save(SILVER_PATH)
+optimize(spark, SILVER, DATASET.silver.zorder_by)
+
+display(
+    spark.table(DQ_METRICS.full_name(CATALOG))
+    .filter(f"table_name = '{DATASET.silver.name}' AND run_id = '{RUN_ID}'")
+    .orderBy("batch_id")
 )
-
-rows_silver = spark.read.format("delta").load(SILVER_PATH).count()
-print(f"[silver] rows_written={rows_silver}  DONE")
-
-display(silver_df.orderBy("Date", "Symbol").limit(10))

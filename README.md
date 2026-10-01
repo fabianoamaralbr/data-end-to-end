@@ -19,59 +19,59 @@
 
 Dados financeiros públicos de mercado de ações (OHLCV — Open, High, Low, Close, Volume) são valiosos para análises de risco, retorno e tendência, mas chegam em formato CSV bruto, sem qualidade garantida, sem histórico de transformação e sem governança. Este projeto resolve esse problema construindo uma **plataforma de dados end-to-end** no Azure que:
 
-1. **Ingere** automaticamente dados do Kaggle via Azure Data Factory
-2. **Transforma** em uma arquitetura medallion (bronze → silver → gold) via Databricks
+1. **Ingere** via Azure Data Factory: carga histórica do Kaggle (OHLCV) e carga **incremental diária** de séries do Banco Central (SGS — Selic, CDI, PTAX)
+2. **Transforma** em uma arquitetura medallion (bronze → silver → gold) via Databricks + Unity Catalog, de forma **incremental e idempotente**, com **data contracts** e **quarentena** de registros inválidos
 3. **Expõe** via Synapse Analytics Serverless SQL com tabelas externas Delta Lake
 4. **Visualiza** em Power BI com métricas de retorno, médias móveis e sinais de tendência
 
-O dataset utilizado é o [`adhoppin/financial-data`](https://www.kaggle.com/datasets/adhoppin/financial-data/data) do Kaggle — dados históricos OHLCV de múltiplos ativos (AAPL, MSFT, GOOGL, AMZN, TSLA).
+Fontes: o dataset [`adhoppin/financial-data`](https://www.kaggle.com/datasets/adhoppin/financial-data/data) do Kaggle (OHLCV histórico de AAPL, MSFT, GOOGL, AMZN, TSLA — estático, usado como backfill) e a [API de dados abertos do Banco Central](https://dadosabertos.bcb.gov.br/) (SGS — atualizada diariamente, é a fonte que exercita a carga incremental).
 
 ---
 
 ## Arquitetura
 
 ```
-Kaggle API
-    │  HTTP GET (ADF Copy Activity)
-    ▼
-ADLS Gen2 ── raw/ ── financial-data/*.csv
-    │
-    │  Databricks Medallion Workflow (diário 06:00 BRT)
-    │
-    ├─► bronze/financial_data/        Delta Lake  ← raw + metadata (_ingested_at, _source_file)
-    │
-    ├─► silver/financial_data/        Delta Lake  ← typed, deduplicated, enriched
-    │         partitioned by Date                   (daily_return_pct, intraday_range, price_spread_pct)
-    │
-    └─► gold/financial_data/          Delta Lake  ← MA7, MA30, lag returns, cumulative return
-        gold/daily_summary/           Delta Lake  ← aggregated daily metrics per symbol
+Kaggle (backfill, CSV)          Banco Central SGS (diário, JSON — janela móvel de 7 dias)
+        │  ADF Copy                     │  ADF Copy (tumbling window trigger)
+        ▼                               ▼
+ADLS Gen2 raw/ ── financial-data/*.csv · bcb_sgs/series_code=<n>/<janela>.json
+        │
+        │  file arrival trigger → Databricks Workflow (Unity Catalog, managed identity)
+        │
+        ├─► bronze.ohlcv · bronze.bcb_sgs        Auto Loader + MERGE insert-only por _ingestion_key
+        │                                        (reexecutar não duplica)
+        │
+        ├─► silver.ohlcv · silver.bcb_sgs        MERGE por chave de negócio, versão mais recente vence
+        │   silver.*_quarantine                  registros inválidos + motivo da rejeição
+        │   ops.dq_metrics                       métricas por batch + circuit breaker
+        │
+        └─► gold.ohlcv_detail                    Change Data Feed → recalcula só os símbolos afetados
+            gold.ohlcv_daily_summary             (MA7, MA30, retornos)
               │
-              │  Synapse Serverless SQL (External Tables)
+              │  Synapse Serverless SQL (External Tables, Delta)
               │
-              └─► gold.vw_rolling_volatility
-                  gold.vw_symbol_performance
-                  gold.vw_data_quality_check
+              └─► gold.vw_rolling_volatility · gold.vw_symbol_performance
+                  ops.vw_dq_daily · ops.vw_quarantine_reasons
                         │
                         │  Power BI DirectQuery
                         │
                         └─► financial_dashboard.pbip
-                            ├─ Market Overview (KPIs, price history, volume)
-                            └─ Technical Analysis (OHLC, MA crossover, cumulative return)
 ```
 
-> Diagrama completo com Mermaid e Sequence Diagram: [`docs/architecture/architecture.md`](docs/architecture/architecture.md)
+> Diagrama completo com Mermaid, Sequence Diagram e ADRs: [`architecture.md`](architecture.md)
 
 ### Stack
 
 | Camada | Tecnologia |
 |--------|-----------|
-| Ingestão | Azure Data Factory (HTTP → ADLS copy, Managed Identity) |
-| Armazenamento | Azure Data Lake Storage Gen2 (4 containers: raw/bronze/silver/gold) |
-| Transformação | Azure Databricks (PySpark 3.5, Delta Lake 3.1, medallion architecture) |
+| Ingestão | Azure Data Factory (HTTP → ADLS, Managed Identity, tumbling window) |
+| Armazenamento | Azure Data Lake Storage Gen2 (raw/bronze/silver/gold + catálogo UC) |
+| Governança | Unity Catalog (access connector com managed identity, external locations) |
+| Transformação | Azure Databricks (Auto Loader, Delta MERGE, Change Data Feed) — lógica no pacote `src/transforms` |
 | Analytics SQL | Azure Synapse Analytics Serverless SQL (external tables, Delta format) |
 | Visualização | Power BI (PBIP format, DirectQuery, semantic model com DAX measures) |
-| IaC | Terraform (modularizado: storage, adf, databricks, synapse) |
-| CI | GitHub Actions (lint, PySpark unit tests com Java 11, terraform validate) |
+| IaC | Terraform (storage, adf, databricks, unity_catalog, synapse; state remoto no Azure) |
+| CI | GitHub Actions: lint, testes unitários + integração Delta com cobertura de `src/transforms`, terraform validate; plan comentado no PR e apply com aprovação |
 
 ---
 
@@ -79,33 +79,34 @@ ADLS Gen2 ── raw/ ── financial-data/*.csv
 
 ```
 data-end-to-end/
-├── .github/workflows/ci.yml          # CI: lint + tests + terraform validate
-├── adf/
-│   ├── linked_service/               # ADLS Gen2 e HTTP Kaggle
-│   ├── dataset/                      # Datasets source e sink
-│   └── pipeline/pl_ingest_financial_data.json
+├── .github/workflows/
+│   ├── ci.yml                        # lint + testes (cobertura de src/transforms) + terraform validate
+│   └── terraform.yml                 # plan comentado no PR; apply em main com aprovação
+├── src/transforms/                   # TODA a lógica do pipeline (importada por notebooks e testes)
+│   ├── contracts.py                  # data contracts (StructType) → DDL + validação
+│   ├── bronze.py                     # metadados + chave de ingestão
+│   ├── silver.py · sgs.py            # tipagem, quarentena, dedup determinística (OHLCV, BCB)
+│   ├── gold.py                       # MA7, MA30, retornos
+│   ├── quality.py                    # regras, métricas por batch, circuit breaker
+│   ├── delta_ops.py                  # MERGEs idempotentes
+│   ├── batch.py                      # o que cada foreachBatch executa
+│   └── datasets.py · tables.py       # registro de datasets/tabelas, DDL e OPTIMIZE
 ├── databricks/
-│   ├── notebooks/
-│   │   ├── 00_setup_mounts.py        # Monta ADLS no DBFS
-│   │   ├── 01_raw_to_bronze.py       # CSV → Delta bronze
-│   │   ├── 02_bronze_to_silver.py    # Limpeza, tipagem, métricas derivadas
-│   │   └── 03_silver_to_gold.py      # MA7, MA30, retornos, agregações
-│   └── jobs/medallion_workflow.json  # Workflow multi-task Databricks
-├── synapse/sql/
-│   ├── 00_setup_database.sql         # DB + managed identity credential
-│   ├── 01_create_external_data_sources.sql
-│   ├── 02_create_external_tables.sql # bronze, silver, gold Delta → SQL
-│   └── 03_create_analytics_views.sql # Views de negócio
-├── powerbi/
-│   ├── financial_model.SemanticModel/model.bim   # Semantic model (DAX, DirectQuery)
-│   └── financial_dashboard.Report/report.json    # Layout das páginas
-├── infra/                            # Terraform (root + 4 modules)
-├── tests/unit/                       # PySpark unit tests (17 testes)
-├── data/sample/financial_sample.csv  # 500 linhas para dev local
-├── scripts/
-│   ├── download_kaggle_data.py       # Download + upload para ADLS
-│   └── _gen_sample.py                # Gerador de dados de amostra
-└── docs/architecture/architecture.md # Diagramas Mermaid + 5 ADRs
+│   ├── notebooks/                    # finos: montam o stream e chamam src/transforms
+│   │   ├── 00_setup_unity_catalog.py # cria/valida tabelas a partir dos contratos
+│   │   ├── 01_raw_to_bronze.py       # Auto Loader → bronze (dataset=ohlcv|bcb_sgs)
+│   │   ├── 02_bronze_to_silver.py    # bronze → silver + quarentena + métricas
+│   │   └── 03_silver_to_gold.py      # CDF da silver → gold por símbolo afetado
+│   └── jobs/medallion_workflow.json  # workflow com file arrival trigger
+├── adf/                              # linked services, datasets, pipelines e trigger
+├── synapse/sql/                      # external tables (espelham os contratos) e views
+├── powerbi/                          # PBIP/TMDL (cache e settings locais fora do git)
+├── infra/                            # Terraform (root + 5 módulos, backend remoto parcial)
+├── tests/
+│   ├── unit/                         # transformações, contratos, regras (sem escrita)
+│   └── integration/                  # tabelas Delta reais: idempotência, MERGE, quarentena
+├── data/sample/financial_sample.csv
+└── scripts/                          # download Kaggle, bootstrap do tfstate, amostra
 ```
 
 ---
@@ -118,17 +119,31 @@ Delta Lake oferece ACID transactions, schema evolution e time-travel. No Synapse
 
 ### Por que Synapse Serverless (não Dedicated Pool)?
 
-Zero custo em idle. Cobrança por TB escaneado. Para um dataset financeiro com ~500K linhas (escala do Kaggle), o custo mensal é de centavos. Se o volume crescer para bilhões de linhas, o gold já está particionado por `Symbol` — as queries do Power BI filtram por símbolo e data, então o Synapse lê apenas as partições relevantes.
+Zero custo em idle. Cobrança por TB escaneado. Para um dataset financeiro com ~500K linhas (escala do Kaggle), o custo mensal é de centavos. As tabelas são gravadas sem deletion vectors, porque o Serverless SQL só lê Delta reader v1.
 
 ### Por que PBIP (não .pbix)?
 
-`.pbix` é binário — não é diffável em git. O formato `.pbip` (Power BI Project) armazena o semantic model em `model.bim` (JSON TMSL) e o layout em `report.json`. Toda mudança de medida DAX, cor ou visual aparece num diff legível no PR.
+`.pbix` é binário — não é diffável em git. O formato `.pbip` (Power BI Project) armazena o semantic model em TMDL (`definition/tables/*.tmdl`, um arquivo por tabela) e o layout em `report.json`. Cache (`cache.abf`) e configurações locais (`localSettings.json`) ficam fora do git, como orienta a documentação do PBIP. Toda mudança de medida DAX, cor ou visual aparece num diff legível no PR.
 
-### Por que bronze em append e silver/gold em overwrite?
+### Como o pipeline garante idempotência e incrementalidade?
 
-Bronze é o arquivo imutável da ingestão. Se a transformação para silver tiver um bug, reprocessamos `02_bronze_to_silver` sem precisar re-ingerir. O bronze nunca é sobrescrito — cada run de ingestão adiciona linhas com `_pipeline_run_ts` para rastreabilidade.
+- **Bronze:** o Auto Loader só lê arquivos novos (checkpoint) e cada registro recebe uma `_ingestion_key` (hash de arquivo + conteúdo). A escrita é um `MERGE` insert-only por essa chave: reexecutar o job, ou perder o checkpoint, não duplica nada.
+- **Silver:** lê apenas os registros novos da bronze e faz `MERGE` por chave de negócio (`Symbol, Date` / `series_code, ref_date`). A deduplicação usa uma window ordenada por `_ingested_at, _source_file, _ingestion_key` (não `dropDuplicates`), e o mesmo critério decide no `MERGE` se a linha existente é substituída: uma versão antiga que chega atrasada não sobrescreve a nova.
+- **Gold:** lê o Change Data Feed da silver e recalcula apenas os símbolos afetados, substituindo a fatia deles com `MERGE ... WHEN NOT MATCHED BY SOURCE DELETE`.
 
-> Todos os ADRs completos em [`docs/architecture/architecture.md`](docs/architecture/architecture.md)
+### Como os data contracts são aplicados?
+
+Os schemas de todas as tabelas vivem em `src/transforms/contracts.py`. O DDL é gerado a partir deles, todo DataFrame é validado antes da escrita e nenhuma escrita usa `mergeSchema`/`overwriteSchema`. Uma coluna nova na origem cai em `_rescued_data` e o registro vai para a quarentena com o motivo `schema_drift`; uma tabela cujo schema divirja do contrato faz o setup falhar com `SchemaContractError`.
+
+### O que acontece com registros inválidos?
+
+Vão para `silver.*_quarantine` com os valores originais e o motivo (`close_invalid;volume_invalid`, por exemplo). Cada batch grava `rows_in / rows_valid / rows_quarantined / rows_deduplicated` em `ops.dq_metrics`. Se a taxa de quarentena passar de `max_quarantine_rate` (5% por padrão), o job falha **antes** de tocar a silver; quarentena e métricas já ficam gravadas para investigação.
+
+### Por que não particionar por data?
+
+OHLCV diário particionado por `Date` gera milhares de partições minúsculas (o problema de small files). As tabelas não são particionadas; o layout é otimizado com `OPTIMIZE ... ZORDER BY (Symbol, Date)`. Liquid clustering foi descartado porque o Synapse Serverless precisa ler as tabelas.
+
+> Todos os ADRs completos em [`architecture.md`](architecture.md)
 
 ---
 
@@ -156,22 +171,23 @@ cp .env.example .env
 ### 2. Instale dependências Python
 
 ```bash
-pip install -r requirements-dev.txt
+make install   # requirements-dev + pacote src/transforms (pip install -e .)
 ```
 
 ### 3. Provisione a infraestrutura Azure
 
 ```bash
-cd infra
-cp terraform.tfvars.example terraform.tfvars
-# Edite terraform.tfvars com sua senha Synapse
 az login
-terraform init
-terraform apply
-cd ..
+./scripts/bootstrap_tfstate.sh                            # uma vez: storage do state remoto
+cp infra/backend.hcl.example infra/backend.hcl
+cp infra/terraform.tfvars.example infra/terraform.tfvars  # senha do Synapse
+make tf-plan                                              # gera infra/tfplan — revise
+make tf-apply                                             # aplica exatamente o plano revisado
 ```
 
-Os outputs do Terraform fornecem os valores para preencher o `.env` (`ADLS_ACCOUNT_NAME`, `DATABRICKS_HOST`, `SYNAPSE_SQL_ENDPOINT`).
+No fluxo normal, a infra muda por PR: o workflow `terraform.yml` comenta o plan no PR e o apply roda após o merge, com aprovação do environment `production`. O workspace Databricks precisa estar associado a um metastore Unity Catalog (padrão em workspaces novos).
+
+Os outputs do Terraform fornecem os valores para preencher o `.env` (`ADLS_ACCOUNT_NAME`, `DATABRICKS_HOST`, `UC_CATALOG`, `SYNAPSE_SQL_ENDPOINT`).
 
 ### 4. Baixe os dados do Kaggle e envie para ADLS
 
@@ -186,20 +202,20 @@ make download-data
 make deploy-adf
 ```
 
-### 6. Importe os notebooks no Databricks
+### 6. Crie o job no Databricks
 
-No workspace Databricks, use **Repos → Add Repo** apontando para este repositório GitHub. Os notebooks em `databricks/notebooks/` serão sincronizados automaticamente.
+O job lê os notebooks direto do GitHub (`git_source`) e é disparado pela chegada de arquivos no container `raw` (file arrival trigger). O ADF não chama o Databricks.
 
-Importe o workflow:
 ```bash
-databricks jobs create --json @databricks/jobs/medallion_workflow.json
+databricks auth login --host $DATABRICKS_HOST
+make deploy-job        # preenche catálogo/storage/e-mail no JSON e cria o job
 ```
 
 ### 7. Execute o pipeline pela primeira vez
 
 ```bash
 make run-pipeline
-# Ou via ADF UI: pl_ingest_financial_data → Add Trigger → Trigger Now
+# Ou ative o trigger tr_bcb_sgs_daily no ADF: janelas diárias, com backfill desde o startTime
 ```
 
 ### 8. Configure Synapse SQL
@@ -223,9 +239,11 @@ Abra `powerbi/financial_dashboard.Report/definition.pbir` no Power BI Desktop (J
 ### 10. Rode os testes localmente (requer Java 11+)
 
 ```bash
-make test
-# Ou: pytest tests/unit/ -v
+make install   # dependências + pacote transforms em modo editável
+make test      # unitários + integração Delta, com cobertura de src/transforms
 ```
+
+Os testes importam as mesmas funções que os notebooks executam. Os de integração (`@pytest.mark.delta`) gravam tabelas Delta reais e verificam, por exemplo, que reprocessar um batch não altera o resultado. No Windows eles exigem `winutils` e são pulados localmente; no CI rodam sempre.
 
 ---
 
@@ -243,6 +261,17 @@ make test
 | `OpenInt` | Open Interest (futuros; 0 para ações) |
 
 **Fonte:** [Kaggle — adhoppin/financial-data](https://www.kaggle.com/datasets/adhoppin/financial-data/data)
+
+### Banco Central (SGS)
+
+| Código | `series_name` | Descrição |
+|-------:|---------------|-----------|
+| 1 | `usd_brl_ptax_venda` | Dólar americano — PTAX venda (R$) |
+| 11 | `selic_diaria` | Taxa Selic diária (% a.d.) |
+| 12 | `cdi_diario` | Taxa CDI diária (% a.d.) |
+| 432 | `selic_meta` | Meta Selic definida pelo Copom (% a.a.) |
+
+**Fonte:** [API SGS do Banco Central](https://dadosabertos.bcb.gov.br/), em `silver.bcb_sgs` (`series_code`, `ref_date`, `value`)
 
 ---
 
@@ -264,6 +293,18 @@ make test
 | `prev_close` | Fechamento do dia anterior (lag 1) |
 | `day_over_day_return_pct` | Retorno dia-a-dia: `(Close - prev_close) / prev_close × 100` |
 | `cumulative_return_pct` | Retorno acumulado desde o primeiro registro do símbolo |
+
+## Regras de qualidade (Silver)
+
+| Motivo | Regra |
+|--------|-------|
+| `schema_drift` | Coluna inesperada na origem (`_rescued_data` preenchido) |
+| `date_invalid` | Data nula ou fora do formato `yyyy-MM-dd` (OHLCV) / `dd/MM/yyyy` (SGS) |
+| `symbol_missing` | Símbolo nulo ou vazio |
+| `open_invalid` · `close_invalid` · `high_invalid` · `low_invalid` | Preço nulo, não numérico ou ≤ 0 |
+| `high_below_low` | Máxima menor que a mínima |
+| `volume_invalid` | Volume nulo, não numérico ou negativo |
+| `series_unknown` · `value_invalid` | Série SGS fora do catálogo / valor não numérico |
 
 ---
 

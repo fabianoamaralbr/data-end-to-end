@@ -27,3 +27,8 @@ output "synapse_sql_endpoint" {
   description = "Endpoint SQL serverless do Synapse (use em .env como SYNAPSE_SQL_ENDPOINT)"
   value       = module.synapse.synapse_connectivity_endpoints
 }
+
+output "uc_catalog_name" {
+  description = "Catalogo Unity Catalog (parametro `catalog` do job Databricks)"
+  value       = module.unity_catalog.catalog_name
+}

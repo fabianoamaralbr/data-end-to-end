@@ -11,6 +11,9 @@ dist/
 build/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
 
 # Secrets
 .env
@@ -23,14 +26,18 @@ build/
 *.tfstate.backup
 *.tfvars
 !*.tfvars.example
+backend.hcl
+tfplan
 .terraform.lock.hcl
 
 # Databricks
 .databricks/
 *.dbc
 
-# Power BI
+# Power BI (PBIP): cache e configuracoes locais do Desktop nao sao versionados
 *.pbix
+**/.pbi/localSettings.json
+**/.pbi/cache.abf
 
 # IDE
 .vscode/

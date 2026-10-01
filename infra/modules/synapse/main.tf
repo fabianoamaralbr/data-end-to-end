@@ -4,20 +4,27 @@ terraform {
   }
 }
 
-variable "resource_group_name"   { type = string }
-variable "location"              { type = string }
-variable "workspace_name"        { type = string }
-variable "storage_account_id"    { type = string }
-variable "storage_account_name"  { type = string }
-variable "sql_admin_login"       { type = string,  sensitive = true }
-variable "sql_admin_password"    { type = string,  sensitive = true }
-variable "tags"                  { type = map(string) }
+variable "resource_group_name" { type = string }
+variable "location" { type = string }
+variable "workspace_name" { type = string }
+variable "storage_account_id" { type = string }
+variable "filesystem_id" { type = string }
+variable "storage_account_name" { type = string }
+variable "sql_admin_login" {
+  type      = string
+  sensitive = true
+}
+variable "sql_admin_password" {
+  type      = string
+  sensitive = true
+}
+variable "tags" { type = map(string) }
 
 resource "azurerm_synapse_workspace" "synw" {
   name                                 = var.workspace_name
   location                             = var.location
   resource_group_name                  = var.resource_group_name
-  storage_data_lake_gen2_filesystem_id = "${var.storage_account_id}/blobServices/default/containers/synapse-root"
+  storage_data_lake_gen2_filesystem_id = var.filesystem_id
   sql_administrator_login              = var.sql_admin_login
   sql_administrator_login_password     = var.sql_admin_password
   tags                                 = var.tags
@@ -47,5 +54,5 @@ resource "azurerm_synapse_firewall_rule" "allow_azure_services" {
   end_ip_address       = "0.0.0.0"
 }
 
-output "synapse_workspace_id"            { value = azurerm_synapse_workspace.synw.id }
-output "synapse_connectivity_endpoints"  { value = azurerm_synapse_workspace.synw.connectivity_endpoints }
+output "synapse_workspace_id" { value = azurerm_synapse_workspace.synw.id }
+output "synapse_connectivity_endpoints" { value = azurerm_synapse_workspace.synw.connectivity_endpoints }

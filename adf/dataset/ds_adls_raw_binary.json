@@ -1,0 +1,32 @@
+{
+  "name": "ds_adls_raw_binary",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "type": "Binary",
+    "description": "Destino: arquivo no container raw do ADLS, com pasta e nome parametrizados.",
+    "linkedServiceName": {
+      "referenceName": "ls_adls_gen2",
+      "type": "LinkedServiceReference",
+      "parameters": {
+        "storageAccountName": {
+          "value": "@dataset().storageAccountName",
+          "type": "Expression"
+        }
+      }
+    },
+    "parameters": {
+      "storageAccountName": { "type": "string" },
+      "folderPath": { "type": "string" },
+      "fileName": { "type": "string" }
+    },
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileSystem": "raw",
+        "folderPath": { "value": "@dataset().folderPath", "type": "Expression" },
+        "fileName": { "value": "@dataset().fileName", "type": "Expression" }
+      }
+    },
+    "annotations": ["raw", "sink"]
+  }
+}

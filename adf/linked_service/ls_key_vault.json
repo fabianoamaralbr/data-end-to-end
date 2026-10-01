@@ -1,0 +1,18 @@
+{
+  "name": "ls_key_vault",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "type": "AzureKeyVault",
+    "description": "Key Vault com as credenciais da API do Kaggle (unico segredo do pipeline). Acesso via managed identity do ADF.",
+    "typeProperties": {
+      "baseUrl": "https://@{linkedService().keyVaultName}.vault.azure.net/"
+    },
+    "parameters": {
+      "keyVaultName": {
+        "type": "string",
+        "defaultValue": "kv-financial-data-dev"
+      }
+    },
+    "annotations": ["financial-data", "secrets"]
+  }
+}

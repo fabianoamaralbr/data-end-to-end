@@ -1,0 +1,14 @@
+{
+  "name": "ls_http_bcb",
+  "type": "Microsoft.DataFactory/factories/linkedservices",
+  "properties": {
+    "type": "HttpServer",
+    "description": "API publica de dados abertos do Banco Central do Brasil (SGS). Sem autenticacao.",
+    "typeProperties": {
+      "url": "https://api.bcb.gov.br/",
+      "enableServerCertificateValidation": true,
+      "authenticationType": "Anonymous"
+    },
+    "annotations": ["bcb", "sgs", "source"]
+  }
+}
