@@ -41,14 +41,21 @@ def test_detail_and_summary_match_contracts(detail):
 
 def test_ma7_rolling_window(detail):
     rows = _symbol(detail, "AAPL")
-    assert rows[0]["ma_close_7d"] == AAPL_CLOSES[0]
+    # Janela incompleta: sem 7 pregoes ainda nao existe MA7
+    assert all(r["ma_close_7d"] is None for r in rows[:6])
     assert rows[6]["ma_close_7d"] == pytest.approx(sum(AAPL_CLOSES[:7]) / 7, abs=1e-4)
     assert rows[7]["ma_close_7d"] == pytest.approx(sum(AAPL_CLOSES[1:8]) / 7, abs=1e-4)
 
 
+def test_ma30_is_null_until_window_is_complete(detail):
+    assert all(r["ma_close_30d"] is None for r in _symbol(detail, "AAPL"))
+
+
 def test_ma_volume_7d(detail):
     rows = _symbol(detail, "AAPL")
-    assert rows[1]["ma_volume_7d"] == 1500
+    assert rows[5]["ma_volume_7d"] is None
+    assert rows[6]["ma_volume_7d"] == 4000  # media de 1000..7000
+    assert rows[7]["ma_volume_7d"] == 5000  # media de 2000..8000
 
 
 def test_prev_close_and_day_over_day_return(detail):
@@ -68,7 +75,7 @@ def test_cumulative_return(detail):
 def test_windows_are_partitioned_by_symbol(detail):
     msft = _symbol(detail, "MSFT")
     assert msft[0]["prev_close"] is None
-    assert msft[0]["ma_close_7d"] == 203.0
+    assert msft[0]["ma_close_7d"] is None  # nao herda pregoes do AAPL
     assert msft[1]["cumulative_return_pct"] == pytest.approx((206.0 - 203.0) / 203.0 * 100, abs=1e-4)
 
 

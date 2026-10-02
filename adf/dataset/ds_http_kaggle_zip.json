@@ -1,0 +1,31 @@
+{
+  "name": "ds_http_kaggle_zip",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "type": "Binary",
+    "description": "Origem: arquivo ZIP do dataset publico no Kaggle (API v1, endpoint datasets/download). A API sempre devolve ZIP, entao o dataset e binario com descompressao ZipDeflate: os CSVs sao extraidos no destino com os nomes originais.",
+    "linkedServiceName": {
+      "referenceName": "ls_http_kaggle",
+      "type": "LinkedServiceReference"
+    },
+    "parameters": {
+      "datasetRef": {
+        "type": "string",
+        "defaultValue": "adhoppin/financial-data"
+      }
+    },
+    "typeProperties": {
+      "location": {
+        "type": "HttpServerLocation",
+        "relativeUrl": {
+          "value": "@concat('datasets/download/', dataset().datasetRef)",
+          "type": "Expression"
+        }
+      },
+      "compression": {
+        "type": "ZipDeflate"
+      }
+    },
+    "annotations": ["kaggle", "source", "zip"]
+  }
+}

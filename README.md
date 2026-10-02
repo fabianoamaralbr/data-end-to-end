@@ -3,12 +3,12 @@
 <h1>Financial Data — End-to-End Platform</h1>
 
 <p>
-  <img alt="CI" src="https://github.com/your-org/data-end-to-end/actions/workflows/ci.yml/badge.svg"/>
+  <a href="https://github.com/fabianoamaralbr/data-end-to-end/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/fabianoamaralbr/data-end-to-end/actions/workflows/ci.yml/badge.svg?branch=main"/></a>
   <img alt="Python 3.11" src="https://img.shields.io/badge/python-3.11-blue?style=flat-square&color=1f4fa0"/>
   <img alt="PySpark 3.5" src="https://img.shields.io/badge/PySpark-3.5-orange?style=flat-square"/>
   <img alt="Delta Lake 3.1" src="https://img.shields.io/badge/Delta_Lake-3.1-blue?style=flat-square&color=002056"/>
   <img alt="Terraform" src="https://img.shields.io/badge/IaC-Terraform-purple?style=flat-square"/>
-  <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-gold?style=flat-square&color=cdac80"/>
+  <a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-gold?style=flat-square&color=cdac80"/></a>
 </p>
 
 </div>
@@ -31,7 +31,7 @@ Fontes: o dataset [`adhoppin/financial-data`](https://www.kaggle.com/datasets/ad
 ## Arquitetura
 
 ```
-Kaggle (backfill, CSV)          Banco Central SGS (diário, JSON — janela móvel de 7 dias)
+Kaggle (backfill, ZIP→CSV)      Banco Central SGS (diário, JSON — janela móvel de 7 dias)
         │  ADF Copy                     │  ADF Copy (tumbling window trigger)
         ▼                               ▼
 ADLS Gen2 raw/ ── financial-data/*.csv · bcb_sgs/series_code=<n>/<janela>.json
@@ -162,7 +162,7 @@ OHLCV diário particionado por `Date` gera milhares de partições minúsculas (
 ### 1. Clone e configure variáveis de ambiente
 
 ```bash
-git clone https://github.com/your-org/data-end-to-end.git
+git clone https://github.com/fabianoamaralbr/data-end-to-end.git
 cd data-end-to-end
 cp .env.example .env
 # Edite .env com suas credenciais Azure e Kaggle
@@ -189,7 +189,9 @@ No fluxo normal, a infra muda por PR: o workflow `terraform.yml` comenta o plan 
 
 Os outputs do Terraform fornecem os valores para preencher o `.env` (`ADLS_ACCOUNT_NAME`, `DATABRICKS_HOST`, `UC_CATALOG`, `SYNAPSE_SQL_ENDPOINT`).
 
-### 4. Baixe os dados do Kaggle e envie para ADLS
+### 4. Carga histórica do Kaggle
+
+Caminho de produção: o pipeline `pl_ingest_financial_data` chama a API do Kaggle (`datasets/download/<owner>/<dataset>`, Basic auth com usuário e chave guardados no Key Vault), descompacta o ZIP em trânsito e grava os CSVs em `raw/financial-data/`. Alternativa local para desenvolvimento:
 
 ```bash
 # Certifique-se de ter KAGGLE_USERNAME e KAGGLE_KEY no .env
@@ -279,7 +281,7 @@ Os testes importam as mesmas funções que os notebooks executam. Os de integra�
 
 | Métrica | Fórmula |
 |---------|---------|
-| `daily_return_pct` | `(Close - Open) / Open × 100` |
+| `intraday_return_pct` | `(Close - Open) / Open × 100` — variação **dentro** do pregão (o retorno entre pregões é `day_over_day_return_pct`, na gold) |
 | `intraday_range` | `High - Low` |
 | `price_spread_pct` | `(High - Low) / Open × 100` |
 
@@ -287,9 +289,9 @@ Os testes importam as mesmas funções que os notebooks executam. Os de integra�
 
 | Métrica | Descrição |
 |---------|-----------|
-| `ma_close_7d` | Média móvel simples de 7 dias do Close |
-| `ma_close_30d` | Média móvel simples de 30 dias do Close |
-| `ma_volume_7d` | Média móvel de 7 dias do Volume |
+| `ma_close_7d` | Média móvel simples dos últimos 7 pregões do Close (`NULL` enquanto houver menos de 7) |
+| `ma_close_30d` | Média móvel simples dos últimos 30 pregões do Close (`NULL` enquanto houver menos de 30) |
+| `ma_volume_7d` | Média móvel dos últimos 7 pregões do Volume (`NULL` enquanto houver menos de 7) |
 | `prev_close` | Fechamento do dia anterior (lag 1) |
 | `day_over_day_return_pct` | Retorno dia-a-dia: `(Close - prev_close) / prev_close × 100` |
 | `cumulative_return_pct` | Retorno acumulado desde o primeiro registro do símbolo |
@@ -303,8 +305,25 @@ Os testes importam as mesmas funções que os notebooks executam. Os de integra�
 | `symbol_missing` | Símbolo nulo ou vazio |
 | `open_invalid` · `close_invalid` · `high_invalid` · `low_invalid` | Preço nulo, não numérico ou ≤ 0 |
 | `high_below_low` | Máxima menor que a mínima |
+| `ohlc_inconsistent` | Máxima abaixo de `max(Open, Close)` ou mínima acima de `min(Open, Close)` |
 | `volume_invalid` | Volume nulo, não numérico ou negativo |
 | `series_unknown` · `value_invalid` | Série SGS fora do catálogo / valor não numérico |
+
+---
+
+## Status do projeto
+
+O que está **verificado automaticamente** a cada PR (workflow `CI`):
+
+- `ruff` em `src/`, `tests/`, `scripts/` e notebooks;
+- testes unitários das transformações e testes de integração que gravam tabelas Delta reais (idempotência do MERGE, versão mais recente vence, quarentena, circuit breaker, recálculo incremental da gold), com cobertura mínima de 90% sobre `src/transforms`;
+- `terraform fmt -check` e `terraform validate` (sem backend).
+
+O que **ainda não** foi exercitado e é a próxima etapa:
+
+- `terraform plan/apply` e execução ponta a ponta numa assinatura Azure — o workflow `Terraform` fica como *skipped* até os secrets serem configurados;
+- o relatório Power BI: o modelo semântico (TMDL, medidas DAX, DirectQuery no Synapse) está versionado, mas `report.json` ainda não tem páginas — os prints entram aqui quando o relatório for montado;
+- o schema real do dataset do Kaggle: `data/sample/financial_sample.csv` é **sintético** (`scripts/_gen_sample.py`) e segue o contrato `RAW_OHLCV`; se o arquivo real divergir, os registros caem na quarentena com `schema_drift` e o circuit breaker interrompe a carga — que é exatamente o comportamento desejado.
 
 ---
 
@@ -317,3 +336,4 @@ Os testes importam as mesmas funções que os notebooks executam. Os de integra�
 
 ---
 
+Licença [MIT](LICENSE) · Fabiano Amaral

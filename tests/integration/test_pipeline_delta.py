@@ -126,7 +126,7 @@ def test_gold_recomputes_only_changed_symbols(spark, tables):
     assert _gold(spark, tables, _changes(spark, ["AAPL", "MSFT"])) == ["AAPL", "MSFT"]
     msft_before = spark.table(tables["detail"]).filter("Symbol = 'MSFT'").first()["_gold_created_at"]
 
-    _silver(spark, tables, bronze_ohlcv(spark, [ohlcv_row(date="2024-01-03", close="110.0")],
+    _silver(spark, tables, bronze_ohlcv(spark, [ohlcv_row(date="2024-01-03", high="112.0", close="110.0")],
                                         ingested_at="2024-01-04 06:00:00"), batch_id=1)
     assert _gold(spark, tables, _changes(spark, ["AAPL"])) == ["AAPL"]
 

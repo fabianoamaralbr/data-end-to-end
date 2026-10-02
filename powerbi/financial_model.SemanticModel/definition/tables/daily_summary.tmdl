@@ -1,16 +1,18 @@
 /// Gold layer daily aggregated financial data with moving averages and return metrics
 table daily_summary
 	lineageTag: 167c3c15-e711-43d7-8012-ee4207a606c8
-	dataCategory: Time
 
-	/// Most recent closing price for selected symbol
-	measure 'Latest Close' = LASTNONBLANK(daily_summary[Close], 1)
+	/// Closing price on the most recent date in the current filter context
+	measure 'Latest Close' = ```
+			VAR _lastDate = MAX(daily_summary[Date])
+			RETURN CALCULATE(MAX(daily_summary[Close]), daily_summary[Date] = _lastDate)
+			```
 		formatString: $ #,0.00
 		lineageTag: 94602f0d-415b-4d48-ac39-9d187b67a32a
 
-	/// Average daily return over selected period
-	measure 'Avg Daily Return %' = AVERAGE(daily_summary[Daily Return %])
-		formatString: 0.00%
+	/// Average intraday return (Close vs Open, in percentage points) over selected period
+	measure 'Avg Intraday Return %' = AVERAGE(daily_summary[Intraday Return %])
+		formatString: #,0.00
 		lineageTag: c482f86a-5ed2-4c78-a8ce-bc2c7c103028
 
 	/// Total traded volume in millions
@@ -80,11 +82,11 @@ table daily_summary
 		lineageTag: a08afbf5-f619-4d89-8111-cb96719cee01
 		sourceColumn: total_volume
 
-	column 'Daily Return %'
+	column 'Intraday Return %'
 		dataType: double
-		formatString: 0.00%
+		formatString: #,0.00
 		lineageTag: 3f611c01-522b-4690-b0e6-40a35f03752e
-		sourceColumn: daily_return_pct
+		sourceColumn: intraday_return_pct
 
 	column 'MA Close 7D'
 		dataType: double
@@ -98,13 +100,13 @@ table daily_summary
 
 	column 'Day over Day Return %'
 		dataType: double
-		formatString: 0.00%
+		formatString: #,0.00
 		lineageTag: bb16ce09-9762-4475-99d0-788964098c25
 		sourceColumn: day_over_day_return_pct
 
 	column 'Cumulative Return %'
 		dataType: double
-		formatString: 0.00%
+		formatString: #,0.00
 		lineageTag: a409ba53-6b63-4e58-8e1c-f6b3ee534a02
 		sourceColumn: cumulative_return_pct
 

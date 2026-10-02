@@ -30,7 +30,7 @@ def test_casts_business_columns(spark):
 def test_derived_metrics(spark):
     bronze = bronze_ohlcv(spark, [ohlcv_row(open_="100.0", high="115.0", low="95.0", close="110.0")])
     row = to_silver(bronze).valid.first()
-    assert row["daily_return_pct"] == 10.0
+    assert row["intraday_return_pct"] == 10.0
     assert row["intraday_range"] == 20.0
     assert row["price_spread_pct"] == 20.0
 
@@ -46,6 +46,8 @@ def test_derived_metrics(spark):
         ({"date": None}, "date_invalid"),
         ({"symbol": "  "}, "symbol_missing"),
         ({"high": "90.0", "low": "99.0"}, "high_below_low"),
+        ({"high": "102.0"}, "ohlc_inconsistent"),  # maxima abaixo do fechamento (104)
+        ({"low": "101.0"}, "ohlc_inconsistent"),  # minima acima da abertura (100)
         ({"volume": "-5"}, "volume_invalid"),
     ],
 )

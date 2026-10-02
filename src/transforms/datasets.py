@@ -62,7 +62,8 @@ OHLCV = Dataset(
     name="ohlcv",
     raw_path="financial-data",
     raw_format="csv",
-    raw_options={"header": "true"},
+    # O ZIP do Kaggle pode trazer arquivos que nao sao CSV (licenca, metadados): ignorados.
+    raw_options={"header": "true", "pathGlobFilter": "*.csv"},
     raw_schema=c.RAW_OHLCV,
     business_columns=tuple(c.OHLCV_BUSINESS_COLUMNS),
     keys=silver.OHLCV_KEYS,

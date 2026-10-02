@@ -72,6 +72,13 @@ def ohlcv_rules() -> tuple[Rule, ...]:
         Rule("high_invalid", F.col("_t_High").isNull() | (F.col("_t_High") <= 0)),
         Rule("low_invalid", F.col("_t_Low").isNull() | (F.col("_t_Low") <= 0)),
         Rule("high_below_low", F.col("_t_High") < F.col("_t_Low")),
+        # A maxima/minima do dia precisam conter abertura e fechamento; o contrario indica
+        # colunas trocadas ou erro de escala na origem (ex.: High em centavos).
+        Rule(
+            "ohlc_inconsistent",
+            (F.col("_t_High") < F.greatest("_t_Open", "_t_Close"))
+            | (F.col("_t_Low") > F.least("_t_Open", "_t_Close")),
+        ),
         Rule("volume_invalid", F.col("_t_Volume").isNull() | (F.col("_t_Volume") < 0)),
     )
 
@@ -79,7 +86,7 @@ def ohlcv_rules() -> tuple[Rule, ...]:
 def add_derived_metrics(df: DataFrame) -> DataFrame:
     return (
         df
-        .withColumn("daily_return_pct", F.round((F.col("Close") - F.col("Open")) / F.col("Open") * 100, 4))
+        .withColumn("intraday_return_pct", F.round((F.col("Close") - F.col("Open")) / F.col("Open") * 100, 4))
         .withColumn("intraday_range", F.round(F.col("High") - F.col("Low"), 4))
         .withColumn("price_spread_pct", F.round((F.col("High") - F.col("Low")) / F.col("Open") * 100, 4))
     )

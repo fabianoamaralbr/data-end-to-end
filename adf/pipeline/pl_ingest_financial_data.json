@@ -6,69 +6,71 @@
     "parameters": {
       "storageAccountName": {
         "type": "string",
-        "defaultValue": "stfinancialdata"
+        "defaultValue": "stfinancialdatadev"
       },
-      "targetFileName": {
+      "kaggleDataset": {
         "type": "string",
-        "defaultValue": "financial_data.csv"
+        "defaultValue": "adhoppin/financial-data"
+      },
+      "targetFolder": {
+        "type": "string",
+        "defaultValue": "financial-data"
       }
     },
     "activities": [
       {
         "name": "CopyKaggleToRaw",
         "type": "Copy",
-        "description": "Faz download do CSV da API do Kaggle e deposita no container raw do ADLS.",
+        "description": "Baixa o ZIP do dataset pela API do Kaggle (Basic auth via Key Vault), descompacta em transito e grava os CSVs com os nomes originais em raw/<targetFolder>/. Reexecutar sobrescreve os mesmos arquivos; a chave de ingestao da bronze evita duplicidade.",
         "typeProperties": {
           "source": {
-            "type": "DelimitedTextSource",
+            "type": "BinarySource",
             "storeSettings": {
               "type": "HttpReadSettings",
               "requestMethod": "GET"
             },
             "formatSettings": {
-              "type": "DelimitedTextReadSettings"
+              "type": "BinaryReadSettings",
+              "compressionProperties": {
+                "type": "ZipDeflateReadSettings",
+                "preserveZipFileNameAsFolder": false
+              }
             }
           },
           "sink": {
-            "type": "DelimitedTextSink",
+            "type": "BinarySink",
             "storeSettings": {
               "type": "AzureBlobFSWriteSettings"
-            },
-            "formatSettings": {
-              "type": "DelimitedTextWriteSettings",
-              "quoteAllText": false,
-              "fileExtension": ".csv"
             }
           },
-          "enableStaging": false,
-          "translator": {
-            "type": "TabularTranslator",
-            "typeConversion": true,
-            "typeConversionSettings": {
-              "allowDataTruncation": true,
-              "treatBooleanAsNumber": false
-            }
-          }
+          "enableStaging": false
         },
         "inputs": [
           {
-            "referenceName": "ds_http_kaggle_csv",
-            "type": "DatasetReference"
+            "referenceName": "ds_http_kaggle_zip",
+            "type": "DatasetReference",
+            "parameters": {
+              "datasetRef": {
+                "value": "@pipeline().parameters.kaggleDataset",
+                "type": "Expression"
+              }
+            }
           }
         ],
         "outputs": [
           {
-            "referenceName": "ds_adls_raw_csv",
+            "referenceName": "ds_adls_raw_binary",
             "type": "DatasetReference",
             "parameters": {
               "storageAccountName": {
                 "value": "@pipeline().parameters.storageAccountName",
                 "type": "Expression"
               },
-              "fileName": {
-                "value": "@pipeline().parameters.targetFileName",
+              "folderPath": {
+                "value": "@pipeline().parameters.targetFolder",
                 "type": "Expression"
-              }
+              },
+              "fileName": ""
             }
           }
         ],

@@ -6,54 +6,105 @@ USE financial_analytics;
 GO
 
 -- ── 1. Latest price per symbol ────────────────────────────────────────────────
+-- One row per symbol: the most recent trading day and its closing price.
 CREATE OR ALTER VIEW gold.vw_latest_price AS
+WITH ranked AS (
+    SELECT
+        Symbol,
+        [Date],
+        close,
+        ROW_NUMBER() OVER (PARTITION BY Symbol ORDER BY [Date] DESC) AS rn
+    FROM gold.daily_summary
+),
+totals AS (
+    SELECT
+        Symbol,
+        AVG(intraday_return_pct) AS avg_intraday_return_pct,
+        SUM(total_volume)        AS total_volume_all_time
+    FROM gold.daily_summary
+    GROUP BY Symbol
+)
 SELECT
-    Symbol,
-    MAX([Date])                                             AS latest_date,
-    MAX(close) OVER (PARTITION BY Symbol ORDER BY [Date]
-                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS latest_close,
-    AVG(daily_return_pct)                                   AS avg_daily_return_pct,
-    SUM(total_volume)                                       AS total_volume_all_time
-FROM gold.daily_summary
-GROUP BY Symbol, [Date], close, daily_return_pct, total_volume;
+    r.Symbol,
+    r.[Date]                    AS latest_date,
+    r.close                     AS latest_close,
+    t.avg_intraday_return_pct,
+    t.total_volume_all_time
+FROM ranked AS r
+JOIN totals AS t ON t.Symbol = r.Symbol
+WHERE r.rn = 1;
 GO
 
--- ── 2. Rolling 30-day volatility (std dev of daily returns) ───────────────────
+-- ── 2. Rolling 30-day volatility + trend signal ───────────────────────────────
+-- volatility_30d_pct: sample std dev of the last 30 day-over-day returns (percentage
+-- points, not annualized). NULL until 30 returns exist, consistent with ma_close_30d.
 CREATE OR ALTER VIEW gold.vw_rolling_volatility AS
+WITH returns AS (
+    SELECT
+        Symbol,
+        [Date],
+        close,
+        intraday_return_pct,
+        day_over_day_return_pct,
+        cumulative_return_pct,
+        ma_close_7d,
+        ma_close_30d,
+        STDEV(day_over_day_return_pct) OVER (PARTITION BY Symbol ORDER BY [Date] ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS stdev_30,
+        COUNT(day_over_day_return_pct) OVER (PARTITION BY Symbol ORDER BY [Date] ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS n_returns_30
+    FROM gold.daily_summary
+)
 SELECT
     Symbol,
     [Date],
     close,
-    daily_return_pct,
-    ma_close_7d,
-    ma_close_30d,
+    intraday_return_pct,
     day_over_day_return_pct,
     cumulative_return_pct,
+    ma_close_7d,
+    ma_close_30d,
+    CASE WHEN n_returns_30 = 30 THEN stdev_30 END AS volatility_30d_pct,
     CASE
+        WHEN ma_close_7d IS NULL OR ma_close_30d IS NULL THEN NULL
         WHEN ma_close_7d > ma_close_30d THEN 'BULLISH'
         WHEN ma_close_7d < ma_close_30d THEN 'BEARISH'
         ELSE 'NEUTRAL'
     END AS trend_signal
-FROM gold.daily_summary;
+FROM returns;
 GO
 
--- ── 3. Symbol performance ranking (by cumulative return) ─────────────────────
+-- ── 3. Symbol performance ranking (by total return over the period) ──────────
 CREATE OR ALTER VIEW gold.vw_symbol_performance AS
+WITH bounds AS (
+    SELECT
+        Symbol,
+        MIN([Date])                  AS period_start,
+        MAX([Date])                  AS period_end,
+        MAX(high)                    AS period_high,
+        MIN(low)                     AS period_low,
+        AVG(intraday_return_pct)     AS avg_intraday_return_pct,
+        STDEV(day_over_day_return_pct) AS stdev_daily_return_pct,
+        SUM(total_volume)            AS total_volume,
+        COUNT(*)                     AS trading_days
+    FROM gold.daily_summary
+    GROUP BY Symbol
+)
 SELECT
-    Symbol,
-    MIN([Date])                 AS period_start,
-    MAX([Date])                 AS period_end,
-    FIRST_VALUE(close)          OVER (PARTITION BY Symbol ORDER BY [Date])   AS start_price,
-    LAST_VALUE(close)           OVER (PARTITION BY Symbol ORDER BY [Date]
-                                     ROWS BETWEEN UNBOUNDED PRECEDING
-                                     AND UNBOUNDED FOLLOWING)                 AS end_price,
-    MAX(cumulative_return_pct)  AS max_cumulative_return_pct,
-    AVG(daily_return_pct)       AS avg_daily_return_pct,
-    MAX(high)                   AS all_time_high,
-    MIN(low)                    AS all_time_low,
-    SUM(total_volume)           AS total_volume
-FROM gold.daily_summary
-GROUP BY Symbol, [Date], close, cumulative_return_pct, daily_return_pct, high, low, total_volume;
+    b.Symbol,
+    b.period_start,
+    b.period_end,
+    s.close                                         AS start_price,
+    e.close                                         AS end_price,
+    (e.close - s.close) / NULLIF(s.close, 0) * 100  AS total_return_pct,
+    b.period_high,
+    b.period_low,
+    b.avg_intraday_return_pct,
+    b.stdev_daily_return_pct,
+    b.total_volume,
+    b.trading_days,
+    RANK() OVER (ORDER BY (e.close - s.close) / NULLIF(s.close, 0) DESC) AS return_rank
+FROM bounds AS b
+JOIN gold.daily_summary AS s ON s.Symbol = b.Symbol AND s.[Date] = b.period_start
+JOIN gold.daily_summary AS e ON e.Symbol = b.Symbol AND e.[Date] = b.period_end;
 GO
 
 -- ── 4. Data quality summary (bronze vs silver reconciliation) ─────────────────

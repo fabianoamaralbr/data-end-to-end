@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
     subgraph SOURCE["Fontes"]
-        K["Kaggle\nOHLCV CSV\n(backfill estatico)"]
+        K["Kaggle\nOHLCV (ZIP → CSV)\n(backfill estatico)"]
         BCB["Banco Central SGS\nJSON diario\n(incremental)"]
     end
 
