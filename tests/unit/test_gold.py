@@ -1,94 +1,87 @@
-"""Testes unitarios para a logica de agregacao da camada gold (medias moveis, retornos com lag, resumo diario)."""
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import avg, col, first, lag, round as spark_round
-from pyspark.sql.window import Window
+"""Testes de transforms.gold — a mesma funcao que o notebook 03 executa."""
+import pytest
+from helpers import bronze_ohlcv, ohlcv_row
+
+from transforms.contracts import GOLD_OHLCV_DAILY_SUMMARY, GOLD_OHLCV_DETAIL, schema_diff
+from transforms.gold import build_daily_summary, build_detail
+from transforms.silver import to_silver
+
+AAPL_CLOSES = [104.0, 107.0, 109.0, 111.0, 113.0, 115.0, 117.0, 119.0]
+DATES = ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05",
+         "2024-01-08", "2024-01-09", "2024-01-10", "2024-01-11"]
 
 
-def _make_silver_df(spark: SparkSession):
+@pytest.fixture(scope="module")
+def silver(spark):
     rows = [
-        {"Date": "2024-01-02", "Symbol": "AAPL", "Open": 100.0, "High": 105.0, "Low": 99.0, "Close": 104.0, "Volume": 1_000_000, "daily_return_pct": 4.0},
-        {"Date": "2024-01-03", "Symbol": "AAPL", "Open": 104.0, "High": 108.0, "Low": 103.0, "Close": 107.0, "Volume": 1_200_000, "daily_return_pct": 2.88},
-        {"Date": "2024-01-04", "Symbol": "AAPL", "Open": 107.0, "High": 110.0, "Low": 106.0, "Close": 109.0, "Volume": 1_100_000, "daily_return_pct": 1.87},
-        {"Date": "2024-01-05", "Symbol": "AAPL", "Open": 109.0, "High": 112.0, "Low": 108.0, "Close": 111.0, "Volume": 900_000,   "daily_return_pct": 1.83},
-        {"Date": "2024-01-08", "Symbol": "AAPL", "Open": 111.0, "High": 114.0, "Low": 110.0, "Close": 113.0, "Volume": 950_000,   "daily_return_pct": 1.80},
-        {"Date": "2024-01-09", "Symbol": "AAPL", "Open": 113.0, "High": 116.0, "Low": 112.0, "Close": 115.0, "Volume": 800_000,   "daily_return_pct": 1.77},
-        {"Date": "2024-01-10", "Symbol": "AAPL", "Open": 115.0, "High": 118.0, "Low": 114.0, "Close": 117.0, "Volume": 850_000,   "daily_return_pct": 1.74},
-        {"Date": "2024-01-02", "Symbol": "MSFT", "Open": 200.0, "High": 205.0, "Low": 198.0, "Close": 203.0, "Volume": 500_000,   "daily_return_pct": 1.5},
-        {"Date": "2024-01-03", "Symbol": "MSFT", "Open": 203.0, "High": 207.0, "Low": 202.0, "Close": 206.0, "Volume": 520_000,   "daily_return_pct": 1.48},
+        ohlcv_row(date=d, symbol="AAPL", open_="100.0", high="200.0", low="50.0",
+                  close=str(c), volume=str(1000 * (i + 1)))
+        for i, (d, c) in enumerate(zip(DATES, AAPL_CLOSES, strict=True))
     ]
-    return spark.createDataFrame(rows)
+    rows += [
+        ohlcv_row(date="2024-01-02", symbol="MSFT", open_="200.0", high="210.0", low="190.0", close="203.0"),
+        ohlcv_row(date="2024-01-03", symbol="MSFT", open_="203.0", high="210.0", low="190.0", close="206.0"),
+    ]
+    return to_silver(bronze_ohlcv(spark, rows)).valid
 
 
-def test_gold_ma7_uses_7_row_rolling_window(spark):
-    df = _make_silver_df(spark)
-    aapl = df.filter(col("Symbol") == "AAPL").orderBy("Date")
-    window = Window.partitionBy("Symbol").orderBy("Date").rowsBetween(-6, 0)
-    result = aapl.withColumn("ma_close_7d", avg("Close").over(window))
-    rows = result.orderBy("Date").collect()
-    # primeira linha: apenas 1 linha na janela, portanto ma == Close
-    assert abs(rows[0]["ma_close_7d"] - rows[0]["Close"]) < 0.01
-    # setima linha: media completa de 7 linhas
-    closes = [r["Close"] for r in rows[:7]]
-    expected_ma7 = sum(closes) / 7
-    assert abs(rows[6]["ma_close_7d"] - expected_ma7) < 0.01
+@pytest.fixture(scope="module")
+def detail(silver):
+    return build_detail(silver)
 
 
-def test_gold_lag_prev_close_is_none_for_first_row(spark):
-    df = _make_silver_df(spark)
-    aapl = df.filter(col("Symbol") == "AAPL")
-    window = Window.partitionBy("Symbol").orderBy("Date")
-    result = aapl.withColumn("prev_close", lag("Close", 1).over(window))
-    first_row = result.orderBy("Date").first()
-    assert first_row["prev_close"] is None
+def _symbol(df, symbol):
+    return df.filter(df.Symbol == symbol).orderBy("Date").collect()
 
 
-def test_gold_lag_prev_close_matches_prior_day(spark):
-    df = _make_silver_df(spark)
-    aapl = df.filter(col("Symbol") == "AAPL")
-    window = Window.partitionBy("Symbol").orderBy("Date")
-    result = aapl.withColumn("prev_close", lag("Close", 1).over(window)).orderBy("Date").collect()
-    assert result[1]["prev_close"] == result[0]["Close"]
-    assert result[2]["prev_close"] == result[1]["Close"]
+def test_detail_and_summary_match_contracts(detail):
+    assert schema_diff(detail.schema, GOLD_OHLCV_DETAIL) == []
+    assert schema_diff(build_daily_summary(detail).schema, GOLD_OHLCV_DAILY_SUMMARY) == []
 
 
-def test_gold_partitions_moving_averages_by_symbol(spark):
-    df = _make_silver_df(spark)
-    window = Window.partitionBy("Symbol").orderBy("Date").rowsBetween(-6, 0)
-    result = df.withColumn("ma_close_7d", avg("Close").over(window))
-    # a MA da MSFT nunca deve incluir dados da AAPL
-    msft_rows = result.filter(col("Symbol") == "MSFT").orderBy("Date").collect()
-    aapl_rows = result.filter(col("Symbol") == "AAPL").orderBy("Date").collect()
-    assert msft_rows[0]["ma_close_7d"] != aapl_rows[0]["ma_close_7d"]
+def test_ma7_rolling_window(detail):
+    rows = _symbol(detail, "AAPL")
+    # Janela incompleta: sem 7 pregoes ainda nao existe MA7
+    assert all(r["ma_close_7d"] is None for r in rows[:6])
+    assert rows[6]["ma_close_7d"] == pytest.approx(sum(AAPL_CLOSES[:7]) / 7, abs=1e-4)
+    assert rows[7]["ma_close_7d"] == pytest.approx(sum(AAPL_CLOSES[1:8]) / 7, abs=1e-4)
 
 
-def test_gold_daily_summary_aggregates_correctly(spark):
-    from pyspark.sql.functions import first as spark_first, spark_max, spark_min, spark_sum
-    # alias para evitar conflito de nomes
-    from pyspark.sql.functions import max as fmax, min as fmin, sum as fsum
-    df = _make_silver_df(spark)
-    summary = (
-        df.groupBy("Symbol", "Date")
-        .agg(
-            spark_first("Close").alias("close"),
-            fmax("High").alias("high"),
-            fmin("Low").alias("low"),
-            fsum("Volume").alias("total_volume"),
-        )
-    )
-    aapl_count = summary.filter(col("Symbol") == "AAPL").count()
-    msft_count = summary.filter(col("Symbol") == "MSFT").count()
-    assert aapl_count == 7
-    assert msft_count == 2
+def test_ma30_is_null_until_window_is_complete(detail):
+    assert all(r["ma_close_30d"] is None for r in _symbol(detail, "AAPL"))
 
 
-def test_gold_cumulative_return_starts_at_zero_for_first_close(spark):
-    df = _make_silver_df(spark)
-    window = Window.partitionBy("Symbol").orderBy("Date")
-    result = (
-        df
-        .withColumn("first_close", first("Close").over(window))
-        .withColumn("cumulative_return_pct", spark_round((col("Close") - col("first_close")) / col("first_close") * 100, 4))
-        .orderBy("Symbol", "Date")
-    )
-    aapl_first = result.filter(col("Symbol") == "AAPL").orderBy("Date").first()
-    assert aapl_first["cumulative_return_pct"] == 0.0
+def test_ma_volume_7d(detail):
+    rows = _symbol(detail, "AAPL")
+    assert rows[5]["ma_volume_7d"] is None
+    assert rows[6]["ma_volume_7d"] == 4000  # media de 1000..7000
+    assert rows[7]["ma_volume_7d"] == 5000  # media de 2000..8000
+
+
+def test_prev_close_and_day_over_day_return(detail):
+    rows = _symbol(detail, "AAPL")
+    assert rows[0]["prev_close"] is None
+    assert rows[0]["day_over_day_return_pct"] is None
+    assert rows[1]["prev_close"] == AAPL_CLOSES[0]
+    assert rows[1]["day_over_day_return_pct"] == pytest.approx((107.0 - 104.0) / 104.0 * 100, abs=1e-4)
+
+
+def test_cumulative_return(detail):
+    rows = _symbol(detail, "AAPL")
+    assert rows[0]["cumulative_return_pct"] == 0.0
+    assert rows[-1]["cumulative_return_pct"] == pytest.approx((119.0 - 104.0) / 104.0 * 100, abs=1e-4)
+
+
+def test_windows_are_partitioned_by_symbol(detail):
+    msft = _symbol(detail, "MSFT")
+    assert msft[0]["prev_close"] is None
+    assert msft[0]["ma_close_7d"] is None  # nao herda pregoes do AAPL
+    assert msft[1]["cumulative_return_pct"] == pytest.approx((206.0 - 203.0) / 203.0 * 100, abs=1e-4)
+
+
+def test_daily_summary_is_one_row_per_symbol_date(detail):
+    summary = build_daily_summary(detail)
+    assert summary.count() == detail.count() == len(DATES) + 2
+    assert summary.select("Symbol", "Date").distinct().count() == summary.count()
+    row = _symbol(summary, "MSFT")[0]
+    assert (row["open"], row["close"], row["total_volume"]) == (200.0, 203.0, 1_000_000)

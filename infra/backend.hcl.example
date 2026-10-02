@@ -1,0 +1,7 @@
+# Copie para backend.hcl (ignorado pelo git) e rode: terraform init -backend-config=backend.hcl
+# O storage do state e criado uma unica vez por scripts/bootstrap_tfstate.sh.
+resource_group_name  = "rg-terraform-state"
+storage_account_name = "sttfstatefinancial"
+container_name       = "tfstate"
+key                  = "financial-data.dev.tfstate"
+use_azuread_auth     = true

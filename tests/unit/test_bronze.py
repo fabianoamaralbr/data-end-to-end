@@ -1,52 +1,48 @@
-"""Testes unitarios para a logica de transformacao da camada bronze (ingestao)."""
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+"""Testes de transforms.bronze — chave de ingestao e metadados."""
+from helpers import autoloader_batch, ohlcv_row
+
+from transforms.bronze import add_ingestion_metadata
+from transforms.contracts import BRONZE_OHLCV, OHLCV_BUSINESS_COLUMNS, conform
 
 
-def _make_raw_df(spark: SparkSession, rows: list[dict]):
-    return spark.createDataFrame(rows)
+def _keys(spark, rows, **kwargs):
+    batch = autoloader_batch(spark, rows, **kwargs)
+    bronze = add_ingestion_metadata(batch, business_columns=OHLCV_BUSINESS_COLUMNS, run_id="r1")
+    return [r["_ingestion_key"] for r in bronze.collect()]
 
 
-def test_bronze_retains_all_raw_columns(spark):
-    raw = _make_raw_df(spark, [
-        {"Date": "2024-01-02", "Symbol": "AAPL", "Open": "130.0",
-         "High": "132.0", "Low": "129.0", "Close": "131.0", "Volume": "1000000", "OpenInt": "0"},
-    ])
-    assert "Date" in raw.columns
-    assert "Close" in raw.columns
-    assert "Volume" in raw.columns
+def test_adds_metadata_and_matches_contract(spark):
+    batch = autoloader_batch(spark, [ohlcv_row()])
+    bronze = add_ingestion_metadata(batch, business_columns=OHLCV_BUSINESS_COLUMNS, run_id="r1")
+    row = conform(bronze, BRONZE_OHLCV, context="test").first()
+    assert row["_run_id"] == "r1"
+    assert row["_ingested_at"] is not None
+    assert len(row["_ingestion_key"]) == 64
 
 
-def test_bronze_adds_metadata_columns(spark):
-    from pyspark.sql.functions import current_timestamp, input_file_name, lit
-
-    raw = _make_raw_df(spark, [
-        {"Date": "2024-01-02", "Symbol": "AAPL", "Open": "130.0",
-         "High": "132.0", "Low": "129.0", "Close": "131.0", "Volume": "1000000", "OpenInt": "0"},
-    ])
-
-    bronze = (
-        raw
-        .withColumn("_ingested_at", current_timestamp())
-        .withColumn("_source_file", input_file_name())
-        .withColumn("_pipeline_run_ts", lit("2024-01-02T06:00:00+00:00"))
-    )
-
-    assert "_ingested_at" in bronze.columns
-    assert "_source_file" in bronze.columns
-    assert "_pipeline_run_ts" in bronze.columns
+def test_ingestion_key_is_deterministic_across_runs(spark):
+    assert _keys(spark, [ohlcv_row()]) == _keys(spark, [ohlcv_row()])
 
 
-def test_bronze_preserves_row_count(spark):
-    rows = [
-        {"Date": "2024-01-02", "Symbol": "AAPL", "Open": "130.0",
-         "High": "132.0", "Low": "129.0", "Close": "131.0", "Volume": "1000000", "OpenInt": "0"},
-        {"Date": "2024-01-03", "Symbol": "AAPL", "Open": "131.0",
-         "High": "133.0", "Low": "130.0", "Close": "132.0", "Volume": "2000000", "OpenInt": "0"},
-        {"Date": "2024-01-02", "Symbol": "MSFT", "Open": "240.0",
-         "High": "242.0", "Low": "239.0", "Close": "241.0", "Volume": "500000", "OpenInt": "0"},
-    ]
-    raw = _make_raw_df(spark, rows)
-    from pyspark.sql.functions import current_timestamp, lit
-    bronze = raw.withColumn("_ingested_at", current_timestamp()).withColumn("_pipeline_run_ts", lit("t"))
-    assert bronze.count() == 3
+def test_ingestion_key_changes_with_content(spark):
+    assert _keys(spark, [ohlcv_row(close="1.0")]) != _keys(spark, [ohlcv_row(close="2.0")])
+
+
+def test_ingestion_key_changes_with_source_file(spark):
+    a = _keys(spark, [ohlcv_row()], source_file="abfss://raw@st/financial-data/a.csv")
+    b = _keys(spark, [ohlcv_row()], source_file="abfss://raw@st/financial-data/b.csv")
+    assert a != b
+
+
+def test_ingestion_key_distinguishes_null_from_empty(spark):
+    assert _keys(spark, [ohlcv_row(close=None)]) != _keys(spark, [ohlcv_row(close="")])
+
+
+def test_ingestion_key_has_no_concatenation_collisions(spark):
+    a = _keys(spark, [ohlcv_row(open_="1", high="23")])
+    b = _keys(spark, [ohlcv_row(open_="12", high="3")])
+    assert a != b
+
+
+def test_ingestion_key_includes_rescued_data(spark):
+    assert _keys(spark, [ohlcv_row()]) != _keys(spark, [ohlcv_row()], rescued='{"x":"1"}')

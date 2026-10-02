@@ -12,12 +12,9 @@ terraform {
     }
   }
 
-  backend "azurerm" {
-    resource_group_name  = "rg-terraform-state"
-    storage_account_name = "sttfstate"
-    container_name       = "tfstate"
-    key                  = "financial-data.tfstate"
-  }
+  # Configuracao parcial: os valores vem de `-backend-config=backend.hcl` (local) ou
+  # dos secrets do GitHub (CI). Ver backend.hcl.example e scripts/bootstrap_tfstate.sh.
+  backend "azurerm" {}
 }
 
 provider "azurerm" {
@@ -56,18 +53,31 @@ module "adf" {
   location             = var.location
   factory_name         = "adf-${local.prefix}"
   storage_account_name = module.storage.storage_account_name
+  github_account_name  = var.adf_github_account_name
   tags                 = var.tags
 }
 
 module "databricks" {
   source = "./modules/databricks"
 
-  resource_group_name  = azurerm_resource_group.rg.name
-  location             = var.location
-  workspace_name       = "dbw-${local.prefix}"
-  sku                  = var.databricks_sku
+  resource_group_name = azurerm_resource_group.rg.name
+  location            = var.location
+  workspace_name      = "dbw-${local.prefix}"
+  sku                 = var.databricks_sku
+  storage_account_id  = module.storage.storage_account_id
+  tags                = var.tags
+}
+
+module "unity_catalog" {
+  source = "./modules/unity_catalog"
+
   storage_account_name = module.storage.storage_account_name
-  tags                 = var.tags
+  access_connector_id  = module.databricks.access_connector_id
+  catalog_name         = var.uc_catalog_name
+  containers           = module.storage.containers
+
+  # O RBAC do access connector precisa existir antes de validar as external locations.
+  depends_on = [module.databricks]
 }
 
 module "synapse" {
@@ -78,6 +88,7 @@ module "synapse" {
   workspace_name       = "synw-${local.prefix}"
   storage_account_id   = module.storage.storage_account_id
   storage_account_name = module.storage.storage_account_name
+  filesystem_id        = module.storage.synapse_filesystem_id
   sql_admin_login      = var.synapse_sql_admin_login
   sql_admin_password   = var.synapse_sql_admin_password
   tags                 = var.tags

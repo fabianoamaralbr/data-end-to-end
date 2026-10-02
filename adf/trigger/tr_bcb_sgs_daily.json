@@ -1,0 +1,29 @@
+{
+  "name": "tr_bcb_sgs_daily",
+  "properties": {
+    "description": "Tumbling window diario (fecha as 20:00 BRT, apos a publicacao da PTAX). Cada janela e independente, re-executavel e com retry; um startTime no passado gera o backfill das janelas anteriores automaticamente.",
+    "type": "TumblingWindowTrigger",
+    "runtimeState": "Started",
+    "pipeline": {
+      "pipelineReference": {
+        "referenceName": "pl_ingest_bcb_sgs",
+        "type": "PipelineReference"
+      },
+      "parameters": {
+        "windowEnd": "@trigger().outputs.windowEndTime"
+      }
+    },
+    "typeProperties": {
+      "frequency": "Hour",
+      "interval": 24,
+      "startTime": "2026-01-01T23:00:00Z",
+      "delay": "00:00:00",
+      "maxConcurrency": 4,
+      "retryPolicy": {
+        "count": 2,
+        "intervalInSeconds": 900
+      },
+      "dependsOn": []
+    }
+  }
+}

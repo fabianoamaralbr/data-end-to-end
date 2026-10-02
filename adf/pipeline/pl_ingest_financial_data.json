@@ -2,136 +2,90 @@
   "name": "pl_ingest_financial_data",
   "type": "Microsoft.DataFactory/factories/pipelines",
   "properties": {
-    "description": "Ingere dados financeiros OHLCV do Kaggle (via HTTP) no container raw do ADLS e em seguida dispara o workflow medallion no Databricks.",
+    "description": "Carga historica (backfill) do dataset OHLCV do Kaggle no container raw do ADLS. Fonte estatica: a carga incremental diaria vem de pl_ingest_bcb_sgs. A chegada do arquivo dispara o job Databricks (file arrival trigger) — o ADF nao chama o Databricks diretamente.",
     "parameters": {
       "storageAccountName": {
         "type": "string",
-        "defaultValue": "stfinancialdata"
+        "defaultValue": "stfinancialdatadev"
       },
-      "targetFileName": {
+      "kaggleDataset": {
         "type": "string",
-        "defaultValue": "financial_data.csv"
+        "defaultValue": "adhoppin/financial-data"
       },
-      "databricksJobId": {
+      "targetFolder": {
         "type": "string",
-        "defaultValue": ""
+        "defaultValue": "financial-data"
       }
     },
     "activities": [
       {
         "name": "CopyKaggleToRaw",
         "type": "Copy",
-        "description": "Faz download do CSV da API do Kaggle e deposita no container raw do ADLS.",
+        "description": "Baixa o ZIP do dataset pela API do Kaggle (Basic auth via Key Vault), descompacta em transito e grava os CSVs com os nomes originais em raw/<targetFolder>/. Reexecutar sobrescreve os mesmos arquivos; a chave de ingestao da bronze evita duplicidade.",
         "typeProperties": {
           "source": {
-            "type": "DelimitedTextSource",
+            "type": "BinarySource",
             "storeSettings": {
               "type": "HttpReadSettings",
               "requestMethod": "GET"
             },
             "formatSettings": {
-              "type": "DelimitedTextReadSettings"
+              "type": "BinaryReadSettings",
+              "compressionProperties": {
+                "type": "ZipDeflateReadSettings",
+                "preserveZipFileNameAsFolder": false
+              }
             }
           },
           "sink": {
-            "type": "DelimitedTextSink",
+            "type": "BinarySink",
             "storeSettings": {
               "type": "AzureBlobFSWriteSettings"
-            },
-            "formatSettings": {
-              "type": "DelimitedTextWriteSettings",
-              "quoteAllText": false,
-              "fileExtension": ".csv"
             }
           },
-          "enableStaging": false,
-          "translator": {
-            "type": "TabularTranslator",
-            "typeConversion": true,
-            "typeConversionSettings": {
-              "allowDataTruncation": true,
-              "treatBooleanAsNumber": false
-            }
-          }
+          "enableStaging": false
         },
         "inputs": [
           {
-            "referenceName": "ds_http_kaggle_csv",
-            "type": "DatasetReference"
+            "referenceName": "ds_http_kaggle_zip",
+            "type": "DatasetReference",
+            "parameters": {
+              "datasetRef": {
+                "value": "@pipeline().parameters.kaggleDataset",
+                "type": "Expression"
+              }
+            }
           }
         ],
         "outputs": [
           {
-            "referenceName": "ds_adls_raw_csv",
+            "referenceName": "ds_adls_raw_binary",
             "type": "DatasetReference",
             "parameters": {
               "storageAccountName": {
                 "value": "@pipeline().parameters.storageAccountName",
                 "type": "Expression"
               },
-              "fileName": {
-                "value": "@pipeline().parameters.targetFileName",
+              "folderPath": {
+                "value": "@pipeline().parameters.targetFolder",
                 "type": "Expression"
-              }
+              },
+              "fileName": ""
             }
           }
-        ]
-      },
-      {
-        "name": "TriggerMedallionPipeline",
-        "type": "DatabricksSparkPython",
-        "description": "Dispara o workflow medallion do Databricks (bronze -> silver -> gold) apos a chegada dos dados brutos.",
-        "dependsOn": [
-          {
-            "activity": "CopyKaggleToRaw",
-            "dependencyConditions": ["Succeeded"]
-          }
         ],
-        "typeProperties": {
-          "pythonFile": "dbfs:/notebooks/01_raw_to_bronze.py",
-          "parameters": [
-            "--storage-account",
-            {
-              "value": "@pipeline().parameters.storageAccountName",
-              "type": "Expression"
-            },
-            "--source-file",
-            {
-              "value": "@pipeline().parameters.targetFileName",
-              "type": "Expression"
-            }
-          ]
-        },
-        "linkedServiceName": {
-          "referenceName": "ls_databricks",
-          "type": "LinkedServiceReference"
-        }
-      },
-      {
-        "name": "LogIngestionMetadata",
-        "type": "SetVariable",
-        "description": "Armazena o timestamp de execucao da ingestao para rastreabilidade.",
-        "dependsOn": [
-          {
-            "activity": "TriggerMedallionPipeline",
-            "dependencyConditions": ["Succeeded"]
-          }
-        ],
-        "typeProperties": {
-          "variableName": "ingestionTimestamp",
-          "value": {
-            "value": "@utcnow()",
-            "type": "Expression"
-          }
+        "policy": {
+          "timeout": "0.01:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 120
         }
       }
     ],
-    "variables": {
-      "ingestionTimestamp": {
-        "type": "String"
-      }
-    },
-    "annotations": ["financial-data", "ingestion", "medallion"],
+    "annotations": [
+      "financial-data",
+      "ingestion",
+      "backfill"
+    ],
     "concurrency": 1,
     "policy": {
       "elapsedTimeMetric": {}

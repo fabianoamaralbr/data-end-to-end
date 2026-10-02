@@ -1,0 +1,27 @@
+{
+  "name": "ds_http_bcb_sgs",
+  "type": "Microsoft.DataFactory/factories/datasets",
+  "properties": {
+    "type": "Binary",
+    "description": "Origem: GET /dados/serie/bcdata.sgs.{codigo}/dados para uma janela de datas. Binario: a resposta JSON e gravada byte a byte, sem reinterpretacao pelo ADF.",
+    "linkedServiceName": {
+      "referenceName": "ls_http_bcb",
+      "type": "LinkedServiceReference"
+    },
+    "parameters": {
+      "seriesCode": { "type": "string" },
+      "dateFrom": { "type": "string" },
+      "dateTo": { "type": "string" }
+    },
+    "typeProperties": {
+      "location": {
+        "type": "HttpServerLocation",
+        "relativeUrl": {
+          "value": "@concat('dados/serie/bcdata.sgs.', dataset().seriesCode, '/dados?formato=json&dataInicial=', dataset().dateFrom, '&dataFinal=', dataset().dateTo)",
+          "type": "Expression"
+        }
+      }
+    },
+    "annotations": ["bcb", "sgs", "source"]
+  }
+}

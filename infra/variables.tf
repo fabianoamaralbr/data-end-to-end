@@ -25,9 +25,9 @@ variable "tags" {
   description = "Tags aplicadas a todos os recursos"
   type        = map(string)
   default = {
-    project     = "financial-data"
-    team        = "data-engineering"
-    managed_by  = "terraform"
+    project    = "financial-data"
+    team       = "data-engineering"
+    managed_by = "terraform"
   }
 }
 
@@ -44,11 +44,24 @@ variable "adls_replication" {
   default     = "LRS"
 }
 
+# ── Data Factory ──────────────────────────────────────────────────────────────
+variable "adf_github_account_name" {
+  description = "Conta GitHub para a integracao Git do ADF (vazio = sem integracao)"
+  type        = string
+  default     = ""
+}
+
 # ── Databricks ────────────────────────────────────────────────────────────────
 variable "databricks_sku" {
   description = "SKU do workspace Databricks: standard | premium | trial"
   type        = string
   default     = "premium"
+}
+
+variable "uc_catalog_name" {
+  description = "Nome do catalogo Unity Catalog do projeto"
+  type        = string
+  default     = "financial"
 }
 
 # ── Synapse ───────────────────────────────────────────────────────────────────

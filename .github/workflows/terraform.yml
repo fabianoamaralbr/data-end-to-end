@@ -1,0 +1,158 @@
+name: Terraform
+
+# PR que altera infra/  -> plan comentado no PR (atualiza o mesmo comentario a cada push)
+# merge em main         -> novo plan + apply, gated pelo environment "production"
+#                          (configure required reviewers em Settings > Environments)
+#
+# Autenticacao via OIDC (federated credential no Entra ID): nenhum client secret no repo.
+# Secrets necessarios: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+# TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT, TF_VAR_SYNAPSE_SQL_ADMIN_PASSWORD.
+#
+# Sem esses secrets (fork, ou repositorio de portfolio sem assinatura Azure ligada), o
+# job "preflight" registra um aviso e plan/apply ficam como "skipped" em vez de falhar.
+# A validacao estatica (fmt + validate) continua obrigatoria no ci.yml.
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ["infra/**", ".github/workflows/terraform.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/**", ".github/workflows/terraform.yml"]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: terraform-state
+  cancel-in-progress: false
+
+env:
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_synapse_sql_admin_password: ${{ secrets.TF_VAR_SYNAPSE_SQL_ADMIN_PASSWORD }}
+  TF_IN_AUTOMATION: "true"
+
+defaults:
+  run:
+    working-directory: infra
+
+jobs:
+  preflight:
+    name: Credenciais Azure configuradas?
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        working-directory: .
+        env:
+          HAS_CLIENT: ${{ secrets.AZURE_CLIENT_ID != '' }}
+          HAS_TENANT: ${{ secrets.AZURE_TENANT_ID != '' }}
+          HAS_SUB: ${{ secrets.AZURE_SUBSCRIPTION_ID != '' }}
+          HAS_STATE_RG: ${{ secrets.TF_STATE_RESOURCE_GROUP != '' }}
+          HAS_STATE_SA: ${{ secrets.TF_STATE_STORAGE_ACCOUNT != '' }}
+        run: |
+          if [ "$HAS_CLIENT$HAS_TENANT$HAS_SUB$HAS_STATE_RG$HAS_STATE_SA" = "truetruetruetruetrue" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            msg="Secrets do Azure/tfstate ausentes: plan e apply pulados. fmt e validate rodam no workflow CI."
+            echo "::notice title=Terraform::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: github.event_name == 'pull_request' && needs.preflight.outputs.configured == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.4"
+          terraform_wrapper: false
+
+      - name: Init (backend remoto)
+        run: >
+          terraform init -input=false
+          -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+          -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=financial-data.dev.tfstate"
+          -backend-config="use_azuread_auth=true"
+
+      - name: Plan
+        id: plan
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color -lock-timeout=5m -out=tfplan | tee plan.txt
+
+      - name: Comentar plan no PR
+        if: always() && steps.plan.outcome != 'skipped'
+        uses: actions/github-script@v7
+        env:
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- terraform-plan -->';
+            let plan = fs.existsSync('infra/plan.txt') ? fs.readFileSync('infra/plan.txt', 'utf8') : '(sem saida)';
+            const summary = (plan.match(/^(Plan:.*|No changes\..*)$/m) || ['(ver log do job)'])[0];
+            if (plan.length > 60000) plan = '...(truncado)\n' + plan.slice(-60000);
+            const body = `${marker}
+            ### Terraform plan — \`${process.env.PLAN_OUTCOME}\`
+            **${summary}**
+
+            <details><summary>Plano completo</summary>
+
+            \`\`\`hcl
+            ${plan}
+            \`\`\`
+            </details>
+
+            _Commit ${context.sha.slice(0, 7)} · o apply so roda apos merge e aprovacao do environment \`production\`._`;
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: github.event_name == 'push' && needs.preflight.outputs.configured == 'true'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.4"
+          terraform_wrapper: false
+
+      - name: Init (backend remoto)
+        run: >
+          terraform init -input=false
+          -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+          -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=financial-data.dev.tfstate"
+          -backend-config="use_azuread_auth=true"
+
+      - name: Plan
+        run: terraform plan -input=false -lock-timeout=5m -out=tfplan
+
+      - name: Apply do plano gerado acima
+        run: terraform apply -input=false -lock-timeout=5m tfplan

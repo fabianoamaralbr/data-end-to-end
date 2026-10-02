@@ -1,0 +1,131 @@
+{
+  "name": "pl_ingest_bcb_sgs",
+  "type": "Microsoft.DataFactory/factories/pipelines",
+  "properties": {
+    "description": "Ingestao incremental das series do Banco Central (SGS). Cada execucao busca uma janela movel de lookbackDays dias ate windowEnd (cobre fins de semana, feriados e revisoes) e grava um arquivo deterministico por serie e janela em raw/bcb_sgs/series_code=<codigo>/<yyyy-MM-dd>.json. Reexecutar uma janela sobrescreve o mesmo arquivo; o MERGE em (series_code, ref_date) na silver absorve a sobreposicao entre janelas. A chegada do arquivo dispara o job Databricks (file arrival trigger).",
+    "parameters": {
+      "storageAccountName": {
+        "type": "string",
+        "defaultValue": "stfinancialdatadev"
+      },
+      "windowEnd": {
+        "type": "string",
+        "defaultValue": ""
+      },
+      "lookbackDays": {
+        "type": "int",
+        "defaultValue": 7
+      },
+      "series": {
+        "type": "array",
+        "defaultValue": [1, 11, 12, 432]
+      }
+    },
+    "variables": {
+      "windowEnd": {
+        "type": "String"
+      }
+    },
+    "activities": [
+      {
+        "name": "ResolveWindowEnd",
+        "type": "SetVariable",
+        "description": "Usa o fim da janela do tumbling window trigger; em execucao manual, usa agora (UTC).",
+        "typeProperties": {
+          "variableName": "windowEnd",
+          "value": {
+            "value": "@if(empty(pipeline().parameters.windowEnd), utcNow(), pipeline().parameters.windowEnd)",
+            "type": "Expression"
+          }
+        }
+      },
+      {
+        "name": "ForEachSeries",
+        "type": "ForEach",
+        "dependsOn": [
+          {
+            "activity": "ResolveWindowEnd",
+            "dependencyConditions": ["Succeeded"]
+          }
+        ],
+        "typeProperties": {
+          "items": {
+            "value": "@pipeline().parameters.series",
+            "type": "Expression"
+          },
+          "isSequential": false,
+          "batchCount": 4,
+          "activities": [
+            {
+              "name": "CopySeriesWindowToRaw",
+              "type": "Copy",
+              "policy": {
+                "timeout": "0.00:10:00",
+                "retry": 3,
+                "retryIntervalInSeconds": 60
+              },
+              "typeProperties": {
+                "source": {
+                  "type": "BinarySource",
+                  "storeSettings": {
+                    "type": "HttpReadSettings",
+                    "requestMethod": "GET"
+                  }
+                },
+                "sink": {
+                  "type": "BinarySink",
+                  "storeSettings": {
+                    "type": "AzureBlobFSWriteSettings"
+                  }
+                },
+                "enableStaging": false
+              },
+              "inputs": [
+                {
+                  "referenceName": "ds_http_bcb_sgs",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "seriesCode": {
+                      "value": "@string(item())",
+                      "type": "Expression"
+                    },
+                    "dateFrom": {
+                      "value": "@formatDateTime(addDays(variables('windowEnd'), mul(-1, pipeline().parameters.lookbackDays)), 'dd/MM/yyyy')",
+                      "type": "Expression"
+                    },
+                    "dateTo": {
+                      "value": "@formatDateTime(variables('windowEnd'), 'dd/MM/yyyy')",
+                      "type": "Expression"
+                    }
+                  }
+                }
+              ],
+              "outputs": [
+                {
+                  "referenceName": "ds_adls_raw_binary",
+                  "type": "DatasetReference",
+                  "parameters": {
+                    "storageAccountName": {
+                      "value": "@pipeline().parameters.storageAccountName",
+                      "type": "Expression"
+                    },
+                    "folderPath": {
+                      "value": "@concat('bcb_sgs/series_code=', string(item()))",
+                      "type": "Expression"
+                    },
+                    "fileName": {
+                      "value": "@concat(formatDateTime(variables('windowEnd'), 'yyyy-MM-dd'), '.json')",
+                      "type": "Expression"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "annotations": ["bcb", "sgs", "ingestion", "incremental"],
+    "concurrency": 4
+  }
+}

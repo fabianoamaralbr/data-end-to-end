@@ -1,84 +1,113 @@
-"""Testes unitarios para a logica de transformacao da camada silver (limpeza e enriquecimento)."""
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, round as spark_round, to_date
+"""Testes de transforms.silver — a mesma funcao que o notebook 02 executa."""
+from datetime import date
+
+import pytest
+from helpers import bronze_ohlcv, ohlcv_row
+from pyspark.sql import functions as F
+
+from transforms.contracts import QUARANTINE_OHLCV, SILVER_OHLCV, SchemaContractError, schema_diff
+from transforms.silver import deduplicate_latest, to_silver
 
 
-def _make_bronze_df(spark: SparkSession, rows: list[dict]):
-    return spark.createDataFrame(rows)
+def _reasons(result):
+    return {r["Close"]: r["_rejection_reason"] for r in result.quarantine.collect()}
 
 
-def test_silver_deduplicates_date_symbol(spark):
-    rows = [
-        {"Date": "2024-01-02", "Symbol": "AAPL", "Open": "130.0", "High": "132.0", "Low": "129.0", "Close": "131.0", "Volume": "1000000", "OpenInt": "0"},
-        {"Date": "2024-01-02", "Symbol": "AAPL", "Open": "130.0", "High": "132.0", "Low": "129.0", "Close": "131.0", "Volume": "1000000", "OpenInt": "0"},
-    ]
-    df = _make_bronze_df(spark, rows)
-    result = df.dropDuplicates(["Date", "Symbol"])
-    assert result.count() == 1
+def test_output_schemas_match_contracts(spark):
+    result = to_silver(bronze_ohlcv(spark, [ohlcv_row(), ohlcv_row(close="abc")]))
+    assert schema_diff(result.valid.schema, SILVER_OHLCV) == []
+    assert schema_diff(result.quarantine.schema, QUARANTINE_OHLCV) == []
 
 
-def test_silver_keeps_distinct_symbol_date_pairs(spark):
-    rows = [
-        {"Date": "2024-01-02", "Symbol": "AAPL", "Open": "130.0", "High": "132.0", "Low": "129.0", "Close": "131.0", "Volume": "1000000", "OpenInt": "0"},
-        {"Date": "2024-01-02", "Symbol": "MSFT", "Open": "240.0", "High": "242.0", "Low": "239.0", "Close": "241.0", "Volume": "500000", "OpenInt": "0"},
-        {"Date": "2024-01-03", "Symbol": "AAPL", "Open": "131.0", "High": "133.0", "Low": "130.0", "Close": "132.0", "Volume": "2000000", "OpenInt": "0"},
-    ]
-    df = _make_bronze_df(spark, rows)
-    result = df.dropDuplicates(["Date", "Symbol"])
-    assert result.count() == 3
+def test_casts_business_columns(spark):
+    row = to_silver(bronze_ohlcv(spark, [ohlcv_row(symbol=" aapl ")])).valid.first()
+    assert row["Date"] == date(2024, 1, 2)
+    assert row["Symbol"] == "AAPL"
+    assert row["Close"] == 104.0
+    assert row["Volume"] == 1_000_000
 
 
-def test_silver_filters_null_close(spark):
-    rows = [
-        {"Date": "2024-01-02", "Symbol": "AAPL", "Open": "130.0", "High": "132.0", "Low": "129.0", "Close": "131.0", "Volume": "1000000", "OpenInt": "0"},
-        {"Date": "2024-01-03", "Symbol": "AAPL", "Open": "131.0", "High": "133.0", "Low": "130.0", "Close": None, "Volume": "2000000", "OpenInt": "0"},
-    ]
-    df = _make_bronze_df(spark, rows)
-    typed = df.withColumn("Close", col("Close").cast("double"))
-    result = typed.filter(col("Close").isNotNull() & (col("Close") > 0))
-    assert result.count() == 1
+def test_derived_metrics(spark):
+    bronze = bronze_ohlcv(spark, [ohlcv_row(open_="100.0", high="115.0", low="95.0", close="110.0")])
+    row = to_silver(bronze).valid.first()
+    assert row["intraday_return_pct"] == 10.0
+    assert row["intraday_range"] == 20.0
+    assert row["price_spread_pct"] == 20.0
 
 
-def test_silver_filters_zero_close(spark):
-    rows = [
-        {"Date": "2024-01-02", "Symbol": "AAPL", "Open": "130.0", "High": "132.0", "Low": "129.0", "Close": "0.0", "Volume": "1000000", "OpenInt": "0"},
-        {"Date": "2024-01-03", "Symbol": "AAPL", "Open": "131.0", "High": "133.0", "Low": "130.0", "Close": "132.0", "Volume": "2000000", "OpenInt": "0"},
-    ]
-    df = _make_bronze_df(spark, rows)
-    typed = df.withColumn("Close", col("Close").cast("double"))
-    result = typed.filter(col("Close").isNotNull() & (col("Close") > 0))
-    assert result.count() == 1
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"close": None}, "close_invalid"),
+        ({"close": "0"}, "close_invalid"),
+        ({"close": "abc"}, "close_invalid"),
+        ({"open_": "-1"}, "open_invalid"),
+        ({"date": "02/01/2024"}, "date_invalid"),
+        ({"date": None}, "date_invalid"),
+        ({"symbol": "  "}, "symbol_missing"),
+        ({"high": "90.0", "low": "99.0"}, "high_below_low"),
+        ({"high": "102.0"}, "ohlc_inconsistent"),  # maxima abaixo do fechamento (104)
+        ({"low": "101.0"}, "ohlc_inconsistent"),  # minima acima da abertura (100)
+        ({"volume": "-5"}, "volume_invalid"),
+    ],
+)
+def test_invalid_rows_go_to_quarantine_with_reason(spark, overrides, reason):
+    result = to_silver(bronze_ohlcv(spark, [ohlcv_row(**overrides)]))
+    assert result.valid.count() == 0
+    quarantined = result.quarantine.first()
+    assert reason in quarantined["_rejection_reason"].split(";")
 
 
-def test_silver_daily_return_positive_when_close_above_open(spark):
-    rows = [{"Date": "2024-01-02", "Symbol": "AAPL", "Open": "100.0", "High": "115.0", "Low": "99.0", "Close": "110.0", "Volume": "1000000", "OpenInt": "0"}]
-    df = _make_bronze_df(spark, rows)
-    typed = df.withColumn("Open", col("Open").cast("double")).withColumn("Close", col("Close").cast("double"))
-    result = typed.withColumn("daily_return_pct", spark_round((col("Close") - col("Open")) / col("Open") * 100, 4))
-    assert result.collect()[0]["daily_return_pct"] == 10.0
+def test_quarantine_keeps_raw_values_and_all_reasons(spark):
+    result = to_silver(bronze_ohlcv(spark, [ohlcv_row(close="abc", volume="-1")]))
+    row = result.quarantine.first()
+    assert row["Close"] == "abc"  # valor original, nao o cast nulo
+    assert set(row["_rejection_reason"].split(";")) == {"close_invalid", "volume_invalid"}
 
 
-def test_silver_daily_return_negative_when_close_below_open(spark):
-    rows = [{"Date": "2024-01-02", "Symbol": "AAPL", "Open": "110.0", "High": "112.0", "Low": "99.0", "Close": "100.0", "Volume": "1000000", "OpenInt": "0"}]
-    df = _make_bronze_df(spark, rows)
-    typed = df.withColumn("Open", col("Open").cast("double")).withColumn("Close", col("Close").cast("double"))
-    result = typed.withColumn("daily_return_pct", spark_round((col("Close") - col("Open")) / col("Open") * 100, 4))
-    val = result.collect()[0]["daily_return_pct"]
-    assert val < 0
+def test_rescued_data_is_quarantined_as_schema_drift(spark):
+    result = to_silver(bronze_ohlcv(spark, [ohlcv_row()], rescued='{"Dividend":"0.2"}'))
+    assert result.valid.count() == 0
+    assert result.quarantine.first()["_rejection_reason"] == "schema_drift"
 
 
-def test_silver_intraday_range_equals_high_minus_low(spark):
-    rows = [{"Date": "2024-01-02", "Symbol": "AAPL", "Open": "100.0", "High": "115.0", "Low": "95.0", "Close": "110.0", "Volume": "1000000", "OpenInt": "0"}]
-    df = _make_bronze_df(spark, rows)
-    typed = df.withColumn("High", col("High").cast("double")).withColumn("Low", col("Low").cast("double"))
-    result = typed.withColumn("intraday_range", spark_round(col("High") - col("Low"), 4))
-    assert result.collect()[0]["intraday_range"] == 20.0
+def test_valid_and_invalid_rows_are_split(spark):
+    result = to_silver(bronze_ohlcv(spark, [ohlcv_row(), ohlcv_row(date="2024-01-03", close=None)]))
+    assert result.valid.count() == 1
+    assert result.quarantine.count() == 1
 
 
-def test_silver_date_column_is_cast_to_date_type(spark):
-    from pyspark.sql.types import DateType
-    rows = [{"Date": "2024-01-02", "Symbol": "AAPL", "Open": "130.0", "High": "132.0", "Low": "129.0", "Close": "131.0", "Volume": "1000000", "OpenInt": "0"}]
-    df = _make_bronze_df(spark, rows)
-    typed = df.withColumn("Date", to_date(col("Date"), "yyyy-MM-dd"))
-    date_field = [f for f in typed.schema.fields if f.name == "Date"][0]
-    assert isinstance(date_field.dataType, DateType)
+def test_dedup_keeps_latest_ingestion(spark):
+    old = bronze_ohlcv(spark, [ohlcv_row(close="104.0")], ingested_at="2024-01-03 06:00:00")
+    new = bronze_ohlcv(spark, [ohlcv_row(close="104.5")], ingested_at="2024-01-04 06:00:00")
+    for batch in (old.unionByName(new), new.unionByName(old)):
+        rows = to_silver(batch).valid.collect()
+        assert len(rows) == 1
+        assert rows[0]["Close"] == 104.5
+
+
+def test_dedup_is_deterministic_on_ingestion_ties(spark):
+    """Mesmo _ingested_at e mesmo arquivo: desempate pelo hash, independe da ordem das linhas."""
+    rows = [ohlcv_row(close="104.0"), ohlcv_row(close="104.5")]
+    a = to_silver(bronze_ohlcv(spark, rows)).valid.first()["Close"]
+    b = to_silver(bronze_ohlcv(spark, list(reversed(rows))).repartition(2)).valid.first()["Close"]
+    assert a == b
+
+
+def test_dedup_keeps_distinct_keys(spark):
+    rows = [ohlcv_row(), ohlcv_row(symbol="MSFT"), ohlcv_row(date="2024-01-03")]
+    assert to_silver(bronze_ohlcv(spark, rows)).valid.count() == 3
+
+
+def test_deduplicate_latest_generic(spark):
+    df = spark.createDataFrame(
+        [("k", 1, "a"), ("k", 3, "c"), ("k", 2, "b"), ("j", 1, "x")], "key string, version int, payload string"
+    )
+    result = {r["key"]: r["payload"] for r in deduplicate_latest(df, ["key"], ["version"]).collect()}
+    assert result == {"k": "c", "j": "x"}
+
+
+def test_rejects_bronze_outside_contract(spark):
+    bronze = bronze_ohlcv(spark, [ohlcv_row()]).withColumn("unexpected", F.lit(1))
+    with pytest.raises(SchemaContractError, match="coluna inesperada: unexpected"):
+        to_silver(bronze)

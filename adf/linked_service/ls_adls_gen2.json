@@ -3,23 +3,15 @@
   "type": "Microsoft.DataFactory/factories/linkedservices",
   "properties": {
     "type": "AzureBlobFS",
-    "description": "Azure Data Lake Storage Gen2 — armazena os containers raw, bronze, silver e gold",
+    "description": "ADLS Gen2 (raw/bronze/silver/gold). Sem account key: autentica com a managed identity do ADF, que recebe Storage Blob Data Contributor via Terraform (infra/modules/adf).",
     "typeProperties": {
-      "url": "https://@{linkedService().storageAccountName}.dfs.core.windows.net",
-      "accountKey": {
-        "type": "AzureKeyVaultSecret",
-        "store": {
-          "referenceName": "ls_key_vault",
-          "type": "LinkedServiceReference"
-        },
-        "secretName": "adls-account-key"
-      }
+      "url": "https://@{linkedService().storageAccountName}.dfs.core.windows.net"
     },
     "parameters": {
       "storageAccountName": {
         "type": "string"
       }
     },
-    "annotations": ["financial-data", "adls-gen2"]
+    "annotations": ["financial-data", "adls-gen2", "managed-identity"]
   }
 }
