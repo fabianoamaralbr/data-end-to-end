@@ -7,6 +7,10 @@ name: Terraform
 # Autenticacao via OIDC (federated credential no Entra ID): nenhum client secret no repo.
 # Secrets necessarios: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
 # TF_STATE_RESOURCE_GROUP, TF_STATE_STORAGE_ACCOUNT, TF_VAR_SYNAPSE_SQL_ADMIN_PASSWORD.
+#
+# Sem esses secrets (fork, ou repositorio de portfolio sem assinatura Azure ligada), o
+# job "preflight" registra um aviso e plan/apply ficam como "skipped" em vez de falhar.
+# A validacao estatica (fmt + validate) continua obrigatoria no ci.yml.
 
 on:
   pull_request:
@@ -38,10 +42,35 @@ defaults:
     working-directory: infra
 
 jobs:
+  preflight:
+    name: Credenciais Azure configuradas?
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        working-directory: .
+        env:
+          HAS_CLIENT: ${{ secrets.AZURE_CLIENT_ID != '' }}
+          HAS_TENANT: ${{ secrets.AZURE_TENANT_ID != '' }}
+          HAS_SUB: ${{ secrets.AZURE_SUBSCRIPTION_ID != '' }}
+          HAS_STATE_RG: ${{ secrets.TF_STATE_RESOURCE_GROUP != '' }}
+          HAS_STATE_SA: ${{ secrets.TF_STATE_STORAGE_ACCOUNT != '' }}
+        run: |
+          if [ "$HAS_CLIENT$HAS_TENANT$HAS_SUB$HAS_STATE_RG$HAS_STATE_SA" = "truetruetruetruetrue" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            msg="Secrets do Azure/tfstate ausentes: plan e apply pulados. fmt e validate rodam no workflow CI."
+            echo "::notice title=Terraform::$msg"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   plan:
     name: Plan
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    needs: preflight
+    if: github.event_name == 'pull_request' && needs.preflight.outputs.configured == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -102,7 +131,8 @@ jobs:
   apply:
     name: Apply
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    needs: preflight
+    if: github.event_name == 'push' && needs.preflight.outputs.configured == 'true'
     environment: production
     steps:
       - uses: actions/checkout@v4
